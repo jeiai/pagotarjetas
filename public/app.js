@@ -78,7 +78,7 @@ function render() {
   const status = $("#statusFilter").value;
   const records = state.statements
     .filter((item) => status === "todos" || item.status === status)
-    .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+    .sort(compareRecords);
 
   $("#recordsList").innerHTML = records.length
     ? records.map(renderRecord).join("")
@@ -113,6 +113,14 @@ function renderRecord(statement) {
       </div>
     </article>
   `;
+}
+
+function compareRecords(a, b) {
+  const sortBy = $("#sortRecords").value;
+  if (sortBy === "dueDate") {
+    return a.dueDate.localeCompare(b.dueDate) || a.totalAmount - b.totalAmount;
+  }
+  return Number(a[sortBy] || 0) - Number(b[sortBy] || 0) || a.dueDate.localeCompare(b.dueDate);
 }
 
 function escapeHtml(value) {
@@ -219,6 +227,7 @@ $("#recordsList").addEventListener("change", async (event) => {
 });
 
 $("#statusFilter").addEventListener("change", render);
+$("#sortRecords").addEventListener("change", render);
 
 $("#copyFamilyCode").addEventListener("click", async () => {
   await navigator.clipboard.writeText(state.user.familyCode);

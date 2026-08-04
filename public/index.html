@@ -180,12 +180,20 @@
 
             <div class="records-head">
               <h2>Pagos registrados</h2>
-              <select id="statusFilter">
-                <option value="todos">Todos</option>
-                <option value="pendiente">Pendientes</option>
-                <option value="programado">Programados</option>
-                <option value="pagado">Pagados</option>
-              </select>
+              <div class="records-controls">
+                <select id="statusFilter" aria-label="Filtrar por estado">
+                  <option value="todos">Todos</option>
+                  <option value="pendiente">Pendientes</option>
+                  <option value="programado">Programados</option>
+                  <option value="pagado">Pagados</option>
+                </select>
+                <select id="sortRecords" aria-label="Ordenar registros">
+                  <option value="dueDate">Fecha limite</option>
+                  <option value="minPayment">Pago minimo</option>
+                  <option value="noInterestAmount">No intereses</option>
+                  <option value="totalAmount">Monto total</option>
+                </select>
+              </div>
             </div>
             <div class="records-list" id="recordsList"></div>
           </section>
