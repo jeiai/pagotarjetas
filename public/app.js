@@ -157,11 +157,12 @@ document.querySelectorAll("[data-auth-tab]").forEach((button) => {
 
 $("#loginForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
+  const formElement = event.currentTarget;
+  const form = new FormData(formElement);
   try {
     await api("/api/login", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) });
     setMessage($("#authMessage"), "");
-    event.currentTarget.reset();
+    formElement.reset();
     await loadApp();
   } catch (error) {
     setMessage($("#authMessage"), error.message);
@@ -170,11 +171,12 @@ $("#loginForm").addEventListener("submit", async (event) => {
 
 $("#registerForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
+  const formElement = event.currentTarget;
+  const form = new FormData(formElement);
   try {
     await api("/api/register", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) });
     setMessage($("#authMessage"), "");
-    event.currentTarget.reset();
+    formElement.reset();
     await loadApp();
   } catch (error) {
     setMessage($("#authMessage"), error.message);
@@ -183,11 +185,12 @@ $("#registerForm").addEventListener("submit", async (event) => {
 
 $("#resetForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
+  const formElement = event.currentTarget;
+  const form = new FormData(formElement);
   try {
     await api("/api/reset-password", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) });
     setMessage($("#authMessage"), "");
-    event.currentTarget.reset();
+    formElement.reset();
     await loadApp();
   } catch (error) {
     setMessage($("#authMessage"), error.message);
@@ -202,10 +205,11 @@ $("#logoutBtn").addEventListener("click", async () => {
 
 $("#cardForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
+  const formElement = event.currentTarget;
+  const form = new FormData(formElement);
   try {
     await api("/api/cards", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) });
-    event.currentTarget.reset();
+    formElement.reset();
     setMessage($("#appMessage"), "Tarjeta agregada.", true);
     await loadApp();
   } catch (error) {
@@ -215,10 +219,11 @@ $("#cardForm").addEventListener("submit", async (event) => {
 
 $("#statementForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
+  const formElement = event.currentTarget;
+  const form = new FormData(formElement);
   try {
     await api("/api/statements", { method: "POST", body: form });
-    event.currentTarget.reset();
+    formElement.reset();
     setMessage($("#appMessage"), "Estado de cuenta guardado.", true);
     await loadApp();
   } catch (error) {
