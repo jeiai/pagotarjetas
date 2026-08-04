@@ -5,6 +5,7 @@ const path = require("path");
 const { URL } = require("url");
 
 const PORT = Number(process.env.PORT || 4173);
+const HOST = process.env.HOST || "0.0.0.0";
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, "public");
 const DATA_DIR = path.join(ROOT, "data");
@@ -52,6 +53,10 @@ function familyCode() {
 
 function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
+}
+
+function validEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
@@ -218,8 +223,8 @@ async function handleApi(req, res, pathname) {
       const email = normalizeEmail(body.email);
       const password = String(body.password || "");
       const name = sanitizeText(body.name, 80);
-      if (!name || !email || password.length < 6) {
-        return sendJson(res, 400, { error: "Nombre, correo y contrasena de al menos 6 caracteres son obligatorios." });
+      if (!name || !validEmail(email) || password.length < 6) {
+        return sendJson(res, 400, { error: "Nombre, correo valido y contrasena de al menos 6 caracteres son obligatorios." });
       }
       if (db.users.some((user) => user.email === email)) {
         return sendJson(res, 409, { error: "Ese correo ya tiene cuenta." });
@@ -245,6 +250,29 @@ async function handleApi(req, res, pathname) {
       if (!user || !verifyPassword(body.password, user.passwordHash)) {
         return sendJson(res, 401, { error: "Correo o contrasena incorrectos." });
       }
+      const sid = id("sid");
+      db.sessions[sid] = user.id;
+      writeDb(db);
+      return sendJson(res, 200, { user: publicUser(user) }, { "Set-Cookie": `sid=${encodeURIComponent(sid)}; HttpOnly; SameSite=Lax; Path=/` });
+    }
+
+    if (req.method === "POST" && pathname === "/api/reset-password") {
+      const body = await readJson(req);
+      const email = normalizeEmail(body.email);
+      const familyCodeInput = sanitizeText(body.familyCode, 24).toUpperCase();
+      const password = String(body.password || "");
+      const user = db.users.find((item) => item.email === email && item.familyCode === familyCodeInput);
+      if (!validEmail(email) || !familyCodeInput || password.length < 6) {
+        return sendJson(res, 400, { error: "Correo, codigo familiar y contrasena nueva de al menos 6 caracteres son obligatorios." });
+      }
+      if (!user) {
+        return sendJson(res, 404, { error: "No encontramos una cuenta con ese correo y codigo familiar." });
+      }
+      user.passwordHash = hashPassword(password);
+      user.updatedAt = new Date().toISOString();
+      Object.entries(db.sessions).forEach(([sid, userId]) => {
+        if (userId === user.id) delete db.sessions[sid];
+      });
       const sid = id("sid");
       db.sessions[sid] = user.id;
       writeDb(db);
@@ -408,6 +436,6 @@ http
     if (pathname.startsWith("/api/")) return handleApi(req, res, pathname);
     return serveStatic(req, res, decodeURIComponent(pathname));
   })
-  .listen(PORT, () => {
-    console.log(`App disponible en http://127.0.0.1:${PORT}`);
+  .listen(PORT, HOST, () => {
+    console.log(`App disponible en http://${HOST}:${PORT}`);
   });

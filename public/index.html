@@ -26,6 +26,7 @@
           <div class="tabs" role="tablist">
             <button class="tab active" data-auth-tab="login" type="button">Entrar</button>
             <button class="tab" data-auth-tab="register" type="button">Crear cuenta</button>
+            <button class="tab" data-auth-tab="reset" type="button">Resetear</button>
           </div>
 
           <form id="loginForm" class="auth-form">
@@ -58,6 +59,22 @@
               <input name="familyCode" placeholder="Dejalo vacio para crear uno" />
             </label>
             <button class="primary-btn" type="submit">Crear cuenta</button>
+          </form>
+
+          <form id="resetForm" class="auth-form hidden">
+            <label>
+              Correo
+              <input name="email" type="email" autocomplete="email" required />
+            </label>
+            <label>
+              Codigo familiar
+              <input name="familyCode" autocomplete="one-time-code" required />
+            </label>
+            <label>
+              Nueva contrasena
+              <input name="password" type="password" autocomplete="new-password" minlength="6" required />
+            </label>
+            <button class="primary-btn" type="submit">Cambiar contrasena</button>
           </form>
           <p class="form-message" id="authMessage"></p>
         </div>

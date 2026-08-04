@@ -150,9 +150,10 @@ document.querySelectorAll("[data-auth-tab]").forEach((button) => {
   button.addEventListener("click", () => {
     document.querySelectorAll("[data-auth-tab]").forEach((item) => item.classList.remove("active"));
     button.classList.add("active");
-    const login = button.dataset.authTab === "login";
-    $("#loginForm").classList.toggle("hidden", !login);
-    $("#registerForm").classList.toggle("hidden", login);
+    const tab = button.dataset.authTab;
+    $("#loginForm").classList.toggle("hidden", tab !== "login");
+    $("#registerForm").classList.toggle("hidden", tab !== "register");
+    $("#resetForm").classList.toggle("hidden", tab !== "reset");
     setMessage($("#authMessage"), "");
   });
 });
@@ -175,6 +176,19 @@ $("#registerForm").addEventListener("submit", async (event) => {
   const form = new FormData(event.currentTarget);
   try {
     await api("/api/register", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) });
+    setMessage($("#authMessage"), "");
+    event.currentTarget.reset();
+    await loadApp();
+  } catch (error) {
+    setMessage($("#authMessage"), error.message);
+  }
+});
+
+$("#resetForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  try {
+    await api("/api/reset-password", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) });
     setMessage($("#authMessage"), "");
     event.currentTarget.reset();
     await loadApp();
