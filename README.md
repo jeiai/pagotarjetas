@@ -1,6 +1,6 @@
-# Control familiar de tarjetas
+# Control de tarjetas
 
-App web local para que varios usuarios de una familia registren tarjetas de credito, suban capturas o PDF de estados de cuenta y den seguimiento a:
+App web para registrar tarjetas de credito, subir capturas o PDF de estados de cuenta y dar seguimiento a:
 
 - Pago minimo
 - Monto para no generar intereses
@@ -16,7 +16,7 @@ npm start
 
 Abre `http://127.0.0.1:4173`.
 
-La primera persona crea una cuenta y obtiene un codigo familiar. Las demas personas usan ese codigo al registrarse para compartir el mismo tablero.
+Cada persona crea su cuenta con correo y contrasena. Los datos se muestran solo dentro de la cuenta que inicio sesion.
 
 ## Datos
 

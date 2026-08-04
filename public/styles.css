@@ -191,8 +191,7 @@ textarea:focus {
 }
 
 .primary-btn,
-.ghost-btn,
-.code-copy {
+.ghost-btn {
   min-height: 44px;
   border-radius: 7px;
   border: 0;
@@ -281,27 +280,6 @@ textarea:focus {
 .side-panel,
 .main-panel {
   padding: 20px;
-}
-
-.family-panel {
-  margin-top: 24px;
-  padding-top: 20px;
-  border-top: 1px solid var(--line);
-}
-
-.family-panel p {
-  margin: 10px 0 0;
-  color: var(--muted);
-  font-size: 0.9rem;
-  line-height: 1.5;
-}
-
-.code-copy {
-  width: 100%;
-  background: #182324;
-  color: #fff;
-  font-size: 1.2rem;
-  letter-spacing: 0;
 }
 
 .panel-header,

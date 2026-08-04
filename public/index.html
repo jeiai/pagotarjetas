@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Control familiar de tarjetas</title>
+    <title>Control de tarjetas</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -11,12 +11,12 @@
       <section class="auth-view" id="authView">
         <div class="brand-panel">
           <p class="eyebrow">Tarjetas de credito</p>
-          <h1>Control familiar de pagos y estados de cuenta</h1>
+          <h1>Control de pagos y estados de cuenta</h1>
           <p>
             Guarda capturas PNG, JPG o PDF, registra el pago minimo, el monto para no generar intereses y el total de cada tarjeta.
           </p>
           <div class="proof-strip">
-            <span>Usuarios familiares</span>
+            <span>Cuentas de usuario</span>
             <span>Archivos privados</span>
             <span>Fechas limite</span>
           </div>
@@ -54,10 +54,6 @@
               Contrasena
               <input name="password" type="password" autocomplete="new-password" minlength="6" required />
             </label>
-            <label>
-              Codigo familiar opcional
-              <input name="familyCode" placeholder="Dejalo vacio para crear uno" />
-            </label>
             <button class="primary-btn" type="submit">Crear cuenta</button>
           </form>
 
@@ -65,10 +61,6 @@
             <label>
               Correo
               <input name="email" type="email" autocomplete="email" required />
-            </label>
-            <label>
-              Codigo familiar
-              <input name="familyCode" autocomplete="one-time-code" required />
             </label>
             <label>
               Nueva contrasena
@@ -83,7 +75,7 @@
       <section class="dashboard hidden" id="dashboardView">
         <header class="topbar">
           <div>
-            <p class="eyebrow">Panel familiar</p>
+            <p class="eyebrow">Panel personal</p>
             <h1>Estados de cuenta</h1>
           </div>
           <div class="account-box">
@@ -106,8 +98,8 @@
             <strong id="summaryTotal">$0.00</strong>
           </article>
           <article>
-            <span>Familia</span>
-            <strong id="familyCode">----</strong>
+            <span>Tarjetas</span>
+            <strong id="summaryCards">0</strong>
           </article>
         </section>
 
@@ -138,14 +130,6 @@
               </label>
               <button class="primary-btn" type="submit">Agregar tarjeta</button>
             </form>
-
-            <div class="family-panel">
-              <h2>Tu codigo familiar</h2>
-              <button class="code-copy" id="copyFamilyCode" type="button">
-                <span id="familyCodeCopy">----</span>
-              </button>
-              <p>Compártelo con tu familia al crear su cuenta para ver el mismo tablero.</p>
-            </div>
           </aside>
 
           <section class="main-panel">

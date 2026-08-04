@@ -47,10 +47,6 @@ function id(prefix) {
   return `${prefix}_${crypto.randomBytes(10).toString("hex")}`;
 }
 
-function familyCode() {
-  return crypto.randomBytes(4).toString("hex").toUpperCase();
-}
-
 function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
 }
@@ -129,7 +125,6 @@ function publicUser(user) {
     id: user.id,
     name: user.name,
     email: user.email,
-    familyCode: user.familyCode,
     createdAt: user.createdAt,
   };
 }
@@ -141,14 +136,6 @@ function requireUser(req, res, db) {
     return null;
   }
   return user;
-}
-
-function familyUsers(db, user) {
-  return db.users.filter((member) => member.familyCode === user.familyCode);
-}
-
-function familyUserIds(db, user) {
-  return new Set(familyUsers(db, user).map((member) => member.id));
 }
 
 function parseMultipart(buffer, contentType) {
@@ -205,8 +192,7 @@ function allowedFile(file) {
 }
 
 function groupCards(db, user) {
-  const ids = familyUserIds(db, user);
-  return db.cards.filter((card) => ids.has(card.ownerId));
+  return db.cards.filter((card) => card.ownerId === user.id);
 }
 
 function groupStatements(db, user) {
@@ -234,7 +220,6 @@ async function handleApi(req, res, pathname) {
         name,
         email,
         passwordHash: hashPassword(password),
-        familyCode: sanitizeText(body.familyCode, 24).toUpperCase() || familyCode(),
         createdAt: new Date().toISOString(),
       };
       const sid = id("sid");
@@ -259,14 +244,13 @@ async function handleApi(req, res, pathname) {
     if (req.method === "POST" && pathname === "/api/reset-password") {
       const body = await readJson(req);
       const email = normalizeEmail(body.email);
-      const familyCodeInput = sanitizeText(body.familyCode, 24).toUpperCase();
       const password = String(body.password || "");
-      const user = db.users.find((item) => item.email === email && item.familyCode === familyCodeInput);
-      if (!validEmail(email) || !familyCodeInput || password.length < 6) {
-        return sendJson(res, 400, { error: "Correo, codigo familiar y contrasena nueva de al menos 6 caracteres son obligatorios." });
+      const user = db.users.find((item) => item.email === email);
+      if (!validEmail(email) || password.length < 6) {
+        return sendJson(res, 400, { error: "Correo y contrasena nueva de al menos 6 caracteres son obligatorios." });
       }
       if (!user) {
-        return sendJson(res, 404, { error: "No encontramos una cuenta con ese correo y codigo familiar." });
+        return sendJson(res, 404, { error: "No encontramos una cuenta con ese correo." });
       }
       user.passwordHash = hashPassword(password);
       user.updatedAt = new Date().toISOString();
@@ -292,7 +276,6 @@ async function handleApi(req, res, pathname) {
     if (req.method === "GET" && pathname === "/api/me") {
       return sendJson(res, 200, {
         user: publicUser(user),
-        members: familyUsers(db, user).map(publicUser),
       });
     }
 

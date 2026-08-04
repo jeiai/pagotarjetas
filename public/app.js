@@ -2,7 +2,6 @@ const state = {
   user: null,
   cards: [],
   statements: [],
-  members: [],
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -31,7 +30,7 @@ function cardById(id) {
 }
 
 function ownerName(userId) {
-  return state.members.find((member) => member.id === userId)?.name || "Familia";
+  return userId === state.user?.id ? state.user.name : "Usuario";
 }
 
 function render() {
@@ -44,13 +43,12 @@ function render() {
   $("#authView").classList.add("hidden");
   $("#dashboardView").classList.remove("hidden");
   $("#userName").textContent = state.user.name;
-  $("#familyCode").textContent = state.user.familyCode;
-  $("#familyCodeCopy").textContent = state.user.familyCode;
 
   const activeStatements = state.statements.filter((item) => item.status !== "pagado");
   $("#summaryNoInterest").textContent = money(activeStatements.reduce((sum, item) => sum + item.noInterestAmount, 0));
   $("#summaryMinimum").textContent = money(activeStatements.reduce((sum, item) => sum + item.minPayment, 0));
   $("#summaryTotal").textContent = money(activeStatements.reduce((sum, item) => sum + item.totalAmount, 0));
+  $("#summaryCards").textContent = state.cards.length;
 
   $("#cardSelect").innerHTML = state.cards.length
     ? state.cards.map((card) => `<option value="${card.id}">${escapeHtml(card.bankName)} - ${escapeHtml(card.cardName)}</option>`).join("")
@@ -136,7 +134,6 @@ async function loadApp() {
   try {
     const me = await api("/api/me");
     state.user = me.user;
-    state.members = me.members;
     const [cards, statements] = await Promise.all([api("/api/cards"), api("/api/statements")]);
     state.cards = cards.cards;
     state.statements = statements.statements;
@@ -242,10 +239,5 @@ $("#recordsList").addEventListener("change", async (event) => {
 
 $("#statusFilter").addEventListener("change", render);
 $("#sortRecords").addEventListener("change", render);
-
-$("#copyFamilyCode").addEventListener("click", async () => {
-  await navigator.clipboard.writeText(state.user.familyCode);
-  setMessage($("#appMessage"), "Codigo familiar copiado.", true);
-});
 
 loadApp();
