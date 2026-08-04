@@ -1,0 +1,17 @@
+{
+  "name": "tarjetasdecredito",
+  "version": "1.0.0",
+  "description": "App familiar para registrar estados de cuenta de tarjetas de credito.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "tarjetas",
+    "credito",
+    "familia"
+  ],
+  "author": "",
+  "license": "MIT"
+}
