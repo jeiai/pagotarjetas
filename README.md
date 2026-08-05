@@ -29,3 +29,5 @@ Para enviar codigos temporales en Render, configura estas variables de entorno:
 - `RESEND_API_KEY`: API key de Resend.
 - `RESET_EMAIL_FROM`: remitente verificado, por ejemplo `Pagos Tarjetas <no-reply@tudominio.com>`.
 - `RESET_CODE_SECRET`: texto secreto largo para firmar los codigos temporales.
+
+Si el codigo no llega, revisa los logs del servicio en Render. La app escribe si Resend acepto el correo o si lo rechazo por configuracion. El remitente de `RESET_EMAIL_FROM` debe pertenecer a un dominio verificado en Resend.

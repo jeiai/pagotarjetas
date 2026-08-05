@@ -104,9 +104,28 @@ async function sendResetEmail(email, code) {
     }),
   });
 
-  if (!response.ok) {
-    throw Object.assign(new Error("No se pudo enviar el codigo por correo. Revisa la configuracion de correo en Render."), { status: 502 });
+  const responseText = await response.text();
+  let payload = {};
+  try {
+    payload = responseText ? JSON.parse(responseText) : {};
+  } catch {
+    payload = { raw: responseText };
   }
+
+  if (!response.ok) {
+    console.error("[password-reset] Resend rejected email", {
+      status: response.status,
+      email,
+      response: payload,
+    });
+    throw Object.assign(new Error("Resend rechazo el correo. Revisa RESEND_API_KEY, RESET_EMAIL_FROM y que el dominio remitente este verificado."), { status: 502 });
+  }
+
+  console.info("[password-reset] Email accepted by Resend", {
+    email,
+    id: payload.id || null,
+  });
+  return payload;
 }
 
 function send(res, status, body, headers = {}) {
@@ -291,7 +310,7 @@ async function handleApi(req, res, pathname) {
       }
       const user = db.users.find((item) => item.email === email);
       if (!user) {
-        return sendJson(res, 200, { message: "Si existe una cuenta con ese correo, enviaremos un codigo temporal." });
+        return sendJson(res, 404, { error: "No existe una cuenta con ese correo. Primero crea tu cuenta." });
       }
       const now = Date.now();
       const recent = db.passwordResets.find((item) => item.email === email && now - Date.parse(item.createdAt) < 60 * 1000);
@@ -317,7 +336,7 @@ async function handleApi(req, res, pathname) {
         writeDb(latestDb);
         throw error;
       }
-      return sendJson(res, 200, { message: "Te enviamos un codigo temporal. Revisa tu correo." });
+      return sendJson(res, 200, { message: "Codigo enviado. Revisa tu correo y la carpeta de spam." });
     }
 
     if (req.method === "POST" && pathname === "/api/reset-password") {

@@ -198,12 +198,18 @@ $("#resetForm").addEventListener("submit", async (event) => {
 });
 
 $("#requestResetCode").addEventListener("click", async () => {
+  const button = $("#requestResetCode");
   const email = new FormData($("#resetForm")).get("email");
+  button.disabled = true;
+  button.textContent = "Enviando...";
   try {
     const result = await api("/api/request-password-reset", { method: "POST", body: JSON.stringify({ email }) });
     setMessage($("#authMessage"), result.message || "Codigo enviado.", true);
   } catch (error) {
     setMessage($("#authMessage"), error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Enviar codigo temporal";
   }
 });
 
