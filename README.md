@@ -21,3 +21,11 @@ Cada persona crea su cuenta con correo y contrasena. Los datos se muestran solo 
 ## Datos
 
 Los usuarios, tarjetas y estados se guardan en `data/db.json`. Los archivos subidos se guardan en `uploads/`.
+
+## Reset de contrasena por correo
+
+Para enviar codigos temporales en Render, configura estas variables de entorno:
+
+- `RESEND_API_KEY`: API key de Resend.
+- `RESET_EMAIL_FROM`: remitente verificado, por ejemplo `Pagos Tarjetas <no-reply@tudominio.com>`.
+- `RESET_CODE_SECRET`: texto secreto largo para firmar los codigos temporales.

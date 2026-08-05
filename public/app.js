@@ -197,6 +197,16 @@ $("#resetForm").addEventListener("submit", async (event) => {
   }
 });
 
+$("#requestResetCode").addEventListener("click", async () => {
+  const email = new FormData($("#resetForm")).get("email");
+  try {
+    const result = await api("/api/request-password-reset", { method: "POST", body: JSON.stringify({ email }) });
+    setMessage($("#authMessage"), result.message || "Codigo enviado.", true);
+  } catch (error) {
+    setMessage($("#authMessage"), error.message);
+  }
+});
+
 $("#logoutBtn").addEventListener("click", async () => {
   await api("/api/logout", { method: "POST", body: "{}" });
   state.user = null;

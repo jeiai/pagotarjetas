@@ -28,13 +28,19 @@ function ensureStorage() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
   if (!fs.existsSync(DB_FILE)) {
-    writeDb({ users: [], sessions: {}, cards: [], statements: [] });
+    writeDb({ users: [], sessions: {}, cards: [], statements: [], passwordResets: [] });
   }
 }
 
 function readDb() {
   ensureStorage();
-  return JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
+  const db = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
+  db.users ||= [];
+  db.sessions ||= {};
+  db.cards ||= [];
+  db.statements ||= [];
+  db.passwordResets ||= [];
+  return db;
 }
 
 function writeDb(db) {
@@ -65,6 +71,42 @@ function verifyPassword(password, stored) {
   if (!salt || !expected) return false;
   const actual = hashPassword(password, salt).split(":")[1];
   return crypto.timingSafeEqual(Buffer.from(actual), Buffer.from(expected));
+}
+
+function resetCode() {
+  return String(crypto.randomInt(100000, 1000000));
+}
+
+function resetCodeHash(email, code) {
+  const secret = process.env.RESET_CODE_SECRET || "local-reset-secret";
+  return crypto.createHash("sha256").update(`${normalizeEmail(email)}:${String(code).trim()}:${secret}`).digest("hex");
+}
+
+async function sendResetEmail(email, code) {
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.RESET_EMAIL_FROM || process.env.FROM_EMAIL;
+  if (!apiKey || !from) {
+    throw Object.assign(new Error("Configura RESEND_API_KEY y RESET_EMAIL_FROM en Render para enviar codigos por correo."), { status: 503 });
+  }
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from,
+      to: email,
+      subject: "Codigo temporal para resetear tu contrasena",
+      text: `Tu codigo temporal es ${code}. Expira en 15 minutos.`,
+      html: `<p>Tu codigo temporal es <strong>${code}</strong>.</p><p>Expira en 15 minutos.</p>`,
+    }),
+  });
+
+  if (!response.ok) {
+    throw Object.assign(new Error("No se pudo enviar el codigo por correo. Revisa la configuracion de correo en Render."), { status: 502 });
+  }
 }
 
 function send(res, status, body, headers = {}) {
@@ -241,16 +283,66 @@ async function handleApi(req, res, pathname) {
       return sendJson(res, 200, { user: publicUser(user) }, { "Set-Cookie": `sid=${encodeURIComponent(sid)}; HttpOnly; SameSite=Lax; Path=/` });
     }
 
+    if (req.method === "POST" && pathname === "/api/request-password-reset") {
+      const body = await readJson(req);
+      const email = normalizeEmail(body.email);
+      if (!validEmail(email)) {
+        return sendJson(res, 400, { error: "Escribe un correo valido." });
+      }
+      const user = db.users.find((item) => item.email === email);
+      if (!user) {
+        return sendJson(res, 200, { message: "Si existe una cuenta con ese correo, enviaremos un codigo temporal." });
+      }
+      const now = Date.now();
+      const recent = db.passwordResets.find((item) => item.email === email && now - Date.parse(item.createdAt) < 60 * 1000);
+      if (recent) {
+        return sendJson(res, 429, { error: "Espera un minuto antes de pedir otro codigo." });
+      }
+      const code = resetCode();
+      db.passwordResets = db.passwordResets.filter((item) => item.email !== email && Date.parse(item.expiresAt) > now);
+      db.passwordResets.push({
+        id: id("reset"),
+        email,
+        codeHash: resetCodeHash(email, code),
+        expiresAt: new Date(now + 15 * 60 * 1000).toISOString(),
+        createdAt: new Date(now).toISOString(),
+        attempts: 0,
+      });
+      writeDb(db);
+      try {
+        await sendResetEmail(email, code);
+      } catch (error) {
+        const latestDb = readDb();
+        latestDb.passwordResets = latestDb.passwordResets.filter((item) => item.email !== email);
+        writeDb(latestDb);
+        throw error;
+      }
+      return sendJson(res, 200, { message: "Te enviamos un codigo temporal. Revisa tu correo." });
+    }
+
     if (req.method === "POST" && pathname === "/api/reset-password") {
       const body = await readJson(req);
       const email = normalizeEmail(body.email);
+      const code = sanitizeText(body.code, 12);
       const password = String(body.password || "");
       const user = db.users.find((item) => item.email === email);
-      if (!validEmail(email) || password.length < 6) {
-        return sendJson(res, 400, { error: "Correo y contrasena nueva de al menos 6 caracteres son obligatorios." });
+      if (!validEmail(email) || !code || password.length < 6) {
+        return sendJson(res, 400, { error: "Correo, codigo temporal y contrasena nueva de al menos 6 caracteres son obligatorios." });
       }
       if (!user) {
         return sendJson(res, 404, { error: "No encontramos una cuenta con ese correo." });
+      }
+      const now = Date.now();
+      const reset = db.passwordResets.find((item) => item.email === email);
+      if (!reset || Date.parse(reset.expiresAt) < now) {
+        db.passwordResets = db.passwordResets.filter((item) => item.email !== email);
+        writeDb(db);
+        return sendJson(res, 400, { error: "El codigo expiro. Pide uno nuevo." });
+      }
+      if (reset.attempts >= 5 || reset.codeHash !== resetCodeHash(email, code)) {
+        reset.attempts += 1;
+        writeDb(db);
+        return sendJson(res, 400, { error: "Codigo temporal incorrecto." });
       }
       user.passwordHash = hashPassword(password);
       user.updatedAt = new Date().toISOString();
@@ -259,6 +351,7 @@ async function handleApi(req, res, pathname) {
       });
       const sid = id("sid");
       db.sessions[sid] = user.id;
+      db.passwordResets = db.passwordResets.filter((item) => item.email !== email);
       writeDb(db);
       return sendJson(res, 200, { user: publicUser(user) }, { "Set-Cookie": `sid=${encodeURIComponent(sid)}; HttpOnly; SameSite=Lax; Path=/` });
     }
