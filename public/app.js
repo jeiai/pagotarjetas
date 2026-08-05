@@ -53,6 +53,9 @@ function render() {
   $("#cardSelect").innerHTML = state.cards.length
     ? state.cards.map((card) => `<option value="${card.id}">${escapeHtml(card.bankName)} - ${escapeHtml(card.cardName)}</option>`).join("")
     : `<option value="">Primero agrega una tarjeta</option>`;
+  $("#autoCardSelect").innerHTML =
+    `<option value="">Detectar o crear tarjeta</option>` +
+    state.cards.map((card) => `<option value="${card.id}">${escapeHtml(card.bankName)} - ${escapeHtml(card.cardName)}</option>`).join("");
 
   $("#cardsList").innerHTML = state.cards.length
     ? state.cards
@@ -89,7 +92,7 @@ function renderRecord(statement) {
     <article class="record">
       <div class="record-title">
         <strong>${escapeHtml(card.bankName)} - ${escapeHtml(card.cardName)}</strong>
-        <span>${escapeHtml(statement.period)} · vence ${escapeHtml(statement.dueDate)} · subio ${escapeHtml(ownerName(statement.uploadedBy))}</span>
+        <span>${escapeHtml(statement.period)} - vence ${escapeHtml(statement.dueDate || "sin fecha")} - subio ${escapeHtml(ownerName(statement.uploadedBy))}</span>
       </div>
       <div class="metric">
         <span>Minimo</span>
@@ -246,6 +249,45 @@ $("#statementForm").addEventListener("submit", async (event) => {
     setMessage($("#appMessage"), error.message);
   }
 });
+
+$("#autoStatementForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const formElement = event.currentTarget;
+  const fileInput = formElement.querySelector('input[name="documents"]');
+  if (fileInput.files.length > 15) {
+    setMessage($("#appMessage"), "Puedes subir maximo 15 archivos a la vez.");
+    return;
+  }
+  const form = new FormData(formElement);
+  const button = formElement.querySelector('button[type="submit"]');
+  button.disabled = true;
+  button.textContent = "Extrayendo...";
+  $("#autoResults").innerHTML = "";
+  try {
+    const result = await api("/api/statements/auto", { method: "POST", body: form });
+    formElement.reset();
+    setMessage($("#appMessage"), `Se procesaron ${result.results.length} archivo(s).`, true);
+    $("#autoResults").innerHTML = result.results.map(renderAutoResult).join("");
+    await loadApp();
+  } catch (error) {
+    setMessage($("#appMessage"), error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Extraer y guardar";
+  }
+});
+
+function renderAutoResult(item) {
+  const statement = item.statement;
+  const card = item.card;
+  const review = item.needsReview ? " · revisar datos faltantes" : "";
+  return `
+    <div class="auto-result">
+      <strong>${escapeHtml(card.bankName)} - ${escapeHtml(card.cardName)}</strong>
+      <span>${escapeHtml(statement.file.originalName)} - ${escapeHtml(statement.dueDate || "sin fecha")} - ${money(statement.noInterestAmount)} para no intereses${review}</span>
+    </div>
+  `;
+}
 
 $("#recordsList").addEventListener("change", async (event) => {
   const id = event.target.dataset.status;

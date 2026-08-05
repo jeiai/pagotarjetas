@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const http = require("http");
 const path = require("path");
+const zlib = require("zlib");
 const { URL } = require("url");
 
 const PORT = Number(process.env.PORT || 4173);
@@ -11,7 +12,9 @@ const PUBLIC_DIR = path.join(ROOT, "public");
 const DATA_DIR = path.join(ROOT, "data");
 const UPLOADS_DIR = path.join(ROOT, "uploads");
 const DB_FILE = path.join(DATA_DIR, "db.json");
-const MAX_BODY = 18 * 1024 * 1024;
+const MAX_BODY = 80 * 1024 * 1024;
+const MAX_AUTO_FILES = 15;
+const MAX_SINGLE_FILE = 12 * 1024 * 1024;
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -22,6 +25,7 @@ const MIME = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".pdf": "application/pdf",
+  ".zip": "application/zip",
 };
 
 function ensureStorage() {
@@ -219,11 +223,16 @@ function parseMultipart(buffer, contentType) {
     const filename = /filename="([^"]*)"/.exec(headerBlock)?.[1];
     const contentTypePart = /Content-Type:\s*([^\r\n]+)/i.exec(headerBlock)?.[1] || "application/octet-stream";
     if (filename) {
-      parts[name] = {
+      const file = {
         filename: path.basename(filename),
         contentType: contentTypePart,
         buffer: Buffer.from(content, "binary"),
       };
+      if (parts[name]) {
+        parts[name] = Array.isArray(parts[name]) ? [...parts[name], file] : [parts[name], file];
+      } else {
+        parts[name] = file;
+      }
     } else {
       parts[name] = Buffer.from(content, "binary").toString("utf8").trim();
     }
@@ -252,6 +261,104 @@ function allowedFile(file) {
   return [".png", ".jpg", ".jpeg", ".pdf"].includes(ext) && types.has(file.contentType);
 }
 
+function allowedAutoFile(file) {
+  return allowedFile(file);
+}
+
+function detectMime(filename) {
+  return MIME[path.extname(filename).toLowerCase()] || "application/octet-stream";
+}
+
+function safeUploadName(filename) {
+  return path.basename(String(filename || "archivo")).replace(/[^\w.\-() ]/g, "_").slice(0, 120) || "archivo";
+}
+
+function asFileList(value) {
+  if (!value) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function readZipEntries(file) {
+  const buffer = file.buffer;
+  const entries = [];
+  let eocdOffset = -1;
+  for (let i = buffer.length - 22; i >= Math.max(0, buffer.length - 65557); i -= 1) {
+    if (buffer.readUInt32LE(i) === 0x06054b50) {
+      eocdOffset = i;
+      break;
+    }
+  }
+  if (eocdOffset === -1) {
+    throw Object.assign(new Error("El ZIP no parece valido."), { status: 400 });
+  }
+
+  const totalEntries = buffer.readUInt16LE(eocdOffset + 10);
+  const centralOffset = buffer.readUInt32LE(eocdOffset + 16);
+  let offset = centralOffset;
+
+  for (let i = 0; i < totalEntries; i += 1) {
+    if (buffer.readUInt32LE(offset) !== 0x02014b50) break;
+    const method = buffer.readUInt16LE(offset + 10);
+    const compressedSize = buffer.readUInt32LE(offset + 20);
+    const uncompressedSize = buffer.readUInt32LE(offset + 24);
+    const fileNameLength = buffer.readUInt16LE(offset + 28);
+    const extraLength = buffer.readUInt16LE(offset + 30);
+    const commentLength = buffer.readUInt16LE(offset + 32);
+    const localOffset = buffer.readUInt32LE(offset + 42);
+    const filename = buffer.slice(offset + 46, offset + 46 + fileNameLength).toString("utf8");
+    offset += 46 + fileNameLength + extraLength + commentLength;
+
+    if (!filename || filename.endsWith("/") || filename.includes("__MACOSX")) continue;
+    if (buffer.readUInt32LE(localOffset) !== 0x04034b50) continue;
+    const localNameLength = buffer.readUInt16LE(localOffset + 26);
+    const localExtraLength = buffer.readUInt16LE(localOffset + 28);
+    const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    const compressed = buffer.slice(dataStart, dataStart + compressedSize);
+    let data;
+    if (method === 0) {
+      data = compressed;
+    } else if (method === 8) {
+      data = zlib.inflateRawSync(compressed);
+    } else {
+      continue;
+    }
+    if (uncompressedSize && data.length !== uncompressedSize) continue;
+    const entry = {
+      filename: safeUploadName(filename),
+      contentType: detectMime(filename),
+      buffer: data,
+    };
+    if (allowedAutoFile(entry)) entries.push(entry);
+  }
+
+  return entries;
+}
+
+function collectAutoFiles(parts) {
+  const files = [];
+  asFileList(parts.documents).forEach((file) => {
+    const ext = path.extname(file.filename).toLowerCase();
+    if (ext === ".zip" || file.contentType === "application/zip" || file.contentType === "application/x-zip-compressed") {
+      files.push(...readZipEntries(file));
+    } else {
+      files.push(file);
+    }
+  });
+
+  const valid = files.filter(allowedAutoFile);
+  if (!valid.length) {
+    throw Object.assign(new Error("Sube PNG, JPG, PDF o un ZIP con esos formatos."), { status: 400 });
+  }
+  if (valid.length > MAX_AUTO_FILES) {
+    throw Object.assign(new Error("Puedes procesar maximo 15 capturas o PDFs a la vez."), { status: 400 });
+  }
+  const oversized = valid.find((file) => file.buffer.length > MAX_SINGLE_FILE);
+  if (oversized) {
+    throw Object.assign(new Error(`El archivo ${oversized.filename} supera el limite de 12 MB.`), { status: 400 });
+  }
+  return valid;
+}
+
 function groupCards(db, user) {
   return db.cards.filter((card) => card.ownerId === user.id);
 }
@@ -259,6 +366,149 @@ function groupCards(db, user) {
 function groupStatements(db, user) {
   const cardIds = new Set(groupCards(db, user).map((card) => card.id));
   return db.statements.filter((statement) => cardIds.has(statement.cardId));
+}
+
+function normalizeDateFromAi(value) {
+  const text = sanitizeText(value, 40);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  return "";
+}
+
+function aiMoney(value) {
+  return money(String(value ?? "").replace(/[^\d.,]/g, ""));
+}
+
+function parseJsonObject(text) {
+  const raw = String(text || "").trim();
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return {};
+    try {
+      return JSON.parse(match[0]);
+    } catch {
+      return {};
+    }
+  }
+}
+
+async function extractStatementData(file) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw Object.assign(new Error("Configura OPENAI_API_KEY en Render para extraer datos automaticamente."), { status: 503 });
+  }
+
+  const prompt = [
+    "Extrae datos de un estado de cuenta de tarjeta de credito en Mexico.",
+    "Devuelve solo JSON valido con estas llaves:",
+    "bankName, cardName, lastFour, period, dueDate, minPayment, noInterestAmount, totalAmount, confidence, notes.",
+    "dueDate debe estar en formato YYYY-MM-DD.",
+    "Los montos deben ser numeros sin simbolo de moneda.",
+    "Si un dato no aparece, usa cadena vacia o 0.",
+    "noInterestAmount corresponde a pago para no generar intereses.",
+  ].join(" ");
+  const base64 = file.buffer.toString("base64");
+  const content =
+    file.contentType === "application/pdf"
+      ? [
+          { type: "input_text", text: prompt },
+          { type: "input_file", filename: file.filename, file_data: `data:application/pdf;base64,${base64}` },
+        ]
+      : [
+          { type: "input_text", text: prompt },
+          { type: "input_image", image_url: `data:${file.contentType};base64,${base64}` },
+        ];
+
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+      input: [{ role: "user", content }],
+      text: { format: { type: "json_object" } },
+    }),
+  });
+
+  const bodyText = await response.text();
+  let payload = {};
+  try {
+    payload = bodyText ? JSON.parse(bodyText) : {};
+  } catch {
+    payload = { raw: bodyText };
+  }
+  if (!response.ok) {
+    console.error("[auto-extract] OpenAI rejected extraction", {
+      status: response.status,
+      filename: file.filename,
+      response: payload,
+    });
+    throw Object.assign(new Error("OpenAI rechazo la extraccion. Revisa OPENAI_API_KEY y OPENAI_MODEL en Render."), { status: 502 });
+  }
+
+  const outputText =
+    payload.output_text ||
+    payload.output
+      ?.flatMap((item) => item.content || [])
+      .map((item) => item.text || "")
+      .join("\n") ||
+    "";
+  const extracted = parseJsonObject(outputText);
+  return {
+    bankName: sanitizeText(extracted.bankName, 80),
+    cardName: sanitizeText(extracted.cardName, 80),
+    lastFour: sanitizeText(String(extracted.lastFour || "").replace(/\D/g, ""), 4),
+    period: sanitizeText(extracted.period, 40),
+    dueDate: normalizeDateFromAi(extracted.dueDate),
+    minPayment: aiMoney(extracted.minPayment),
+    noInterestAmount: aiMoney(extracted.noInterestAmount),
+    totalAmount: aiMoney(extracted.totalAmount),
+    confidence: Math.max(0, Math.min(1, Number(extracted.confidence || 0))),
+    notes: sanitizeText(extracted.notes, 280),
+  };
+}
+
+function findOrCreateCard(db, user, extracted, fallbackCardId) {
+  const ownCards = groupCards(db, user);
+  const fallback = ownCards.find((card) => card.id === fallbackCardId);
+  const bankName = extracted.bankName || fallback?.bankName || "Banco por revisar";
+  const cardName = extracted.cardName || fallback?.cardName || "Tarjeta por revisar";
+  const lastFour = extracted.lastFour || fallback?.lastFour || "";
+  const existing = ownCards.find((card) => {
+    const sameLastFour = lastFour ? card.lastFour === lastFour : true;
+    return card.bankName.toLowerCase() === bankName.toLowerCase() && card.cardName.toLowerCase() === cardName.toLowerCase() && sameLastFour;
+  });
+  if (existing) return existing;
+  if (fallback && !extracted.bankName && !extracted.cardName) return fallback;
+
+  const card = {
+    id: id("card"),
+    ownerId: user.id,
+    cardName,
+    bankName,
+    lastFour,
+    color: "ink",
+    createdAt: new Date().toISOString(),
+  };
+  db.cards.push(card);
+  return card;
+}
+
+function saveUploadedFile(file) {
+  const ext = path.extname(file.filename).toLowerCase();
+  const fileId = id("file");
+  const storedName = `${fileId}${ext}`;
+  fs.writeFileSync(path.join(UPLOADS_DIR, storedName), file.buffer);
+  return {
+    id: fileId,
+    originalName: file.filename,
+    contentType: file.contentType,
+    size: file.buffer.length,
+    storedName,
+  };
 }
 
 async function handleApi(req, res, pathname) {
@@ -437,10 +687,6 @@ async function handleApi(req, res, pathname) {
       if (!file || !allowedFile(file)) {
         return sendJson(res, 400, { error: "Sube un PNG, JPG o PDF valido." });
       }
-      const ext = path.extname(file.filename).toLowerCase();
-      const fileId = id("file");
-      const filePath = path.join(UPLOADS_DIR, `${fileId}${ext}`);
-      fs.writeFileSync(filePath, file.buffer);
       const statement = {
         id: id("statement"),
         cardId: card.id,
@@ -452,13 +698,7 @@ async function handleApi(req, res, pathname) {
         totalAmount: money(parts.totalAmount),
         notes: sanitizeText(parts.notes, 500),
         status: "pendiente",
-        file: {
-          id: fileId,
-          originalName: file.filename,
-          contentType: file.contentType,
-          size: file.buffer.length,
-          storedName: `${fileId}${ext}`,
-        },
+        file: saveUploadedFile(file),
         createdAt: new Date().toISOString(),
       };
       if (!statement.period || !statement.dueDate || !statement.noInterestAmount || !statement.totalAmount) {
@@ -467,6 +707,48 @@ async function handleApi(req, res, pathname) {
       db.statements.push(statement);
       writeDb(db);
       return sendJson(res, 201, { statement });
+    }
+
+    if (req.method === "POST" && pathname === "/api/statements/auto") {
+      const parts = parseMultipart(await readBody(req), req.headers["content-type"]);
+      const files = collectAutoFiles(parts);
+      const fallbackCardId = sanitizeText(parts.cardId, 80);
+      const results = [];
+
+      for (const file of files) {
+        const extracted = await extractStatementData(file);
+        const card = findOrCreateCard(db, user, extracted, fallbackCardId);
+        const needsReview = !extracted.dueDate || !extracted.noInterestAmount || !extracted.totalAmount;
+        const reviewNotes = [
+          extracted.notes,
+          needsReview ? "Revision necesaria: faltan datos importantes extraidos automaticamente." : "",
+          `Confianza IA: ${Math.round((extracted.confidence || 0) * 100)}%`,
+        ]
+          .filter(Boolean)
+          .join(" ");
+        const statement = {
+          id: id("statement"),
+          cardId: card.id,
+          uploadedBy: user.id,
+          period: extracted.period || "Periodo por revisar",
+          dueDate: extracted.dueDate || "",
+          minPayment: extracted.minPayment || 0,
+          noInterestAmount: extracted.noInterestAmount || 0,
+          totalAmount: extracted.totalAmount || 0,
+          notes: sanitizeText(reviewNotes, 500),
+          status: needsReview ? "pendiente" : "pendiente",
+          needsReview,
+          extractedAt: new Date().toISOString(),
+          extractionConfidence: extracted.confidence,
+          file: saveUploadedFile(file),
+          createdAt: new Date().toISOString(),
+        };
+        db.statements.push(statement);
+        results.push({ statement, card, extracted, needsReview });
+      }
+
+      writeDb(db);
+      return sendJson(res, 201, { results });
     }
 
     const statementMatch = /^\/api\/statements\/([^/]+)$/.exec(pathname);

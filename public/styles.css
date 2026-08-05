@@ -301,6 +301,7 @@ textarea:focus {
   color: var(--muted);
 }
 
+.auto-form,
 .statement-form {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -308,8 +309,45 @@ textarea:focus {
   margin-top: 18px;
 }
 
+.auto-form {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7faf8;
+}
+
+.auto-form p {
+  margin-bottom: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.auto-form h2 {
+  margin-bottom: 6px;
+}
+
+.auto-form .full,
 .statement-form .full {
   grid-column: 1 / -1;
+}
+
+.auto-results {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.auto-result {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 12px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.auto-result strong {
+  color: var(--ink);
 }
 
 .cards-list {
@@ -429,6 +467,7 @@ textarea:focus {
     min-height: auto;
   }
 
+  .auto-form,
   .statement-form {
     grid-template-columns: 1fr;
   }

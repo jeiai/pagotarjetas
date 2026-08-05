@@ -145,6 +145,29 @@
               </div>
             </div>
 
+            <form id="autoStatementForm" class="auto-form">
+              <div>
+                <h2>Carga automatica</h2>
+                <p>Sube hasta 15 capturas o un ZIP. La app intentara leer banco, tarjeta, fecha limite y montos.</p>
+              </div>
+              <label>
+                Tarjeta de respaldo
+                <select name="cardId" id="autoCardSelect"></select>
+              </label>
+              <label class="full">
+                Capturas PNG/JPG/PDF o ZIP
+                <input
+                  name="documents"
+                  type="file"
+                  accept=".png,.jpg,.jpeg,.pdf,.zip,image/png,image/jpeg,application/pdf,application/zip"
+                  multiple
+                  required
+                />
+              </label>
+              <button class="primary-btn full" type="submit">Extraer y guardar</button>
+            </form>
+            <div class="auto-results" id="autoResults"></div>
+
             <form id="statementForm" class="statement-form">
               <label>
                 Tarjeta
