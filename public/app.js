@@ -9,16 +9,84 @@ const money = (value) =>
   new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(Number(value || 0));
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    credentials: "include",
-    ...options,
-    headers: options.body instanceof FormData ? options.headers : { "Content-Type": "application/json", ...(options.headers || {}) },
-  });
-  const contentType = response.headers.get("content-type") || "";
-  const data = contentType.includes("application/json") ? await response.json() : {};
-  if (!response.ok) throw Object.assign(new Error(data.error || `No se pudo completar la accion (HTTP ${response.status}). Intenta de nuevo.`), { status: response.status });
-  if (!contentType.includes("application/json")) throw new Error("El servidor no devolvio una respuesta valida. Intenta de nuevo en unos momentos.");
-  return data;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.body instanceof FormData ? 120000 : 30000);
+  try {
+    const response = await fetch(path, {
+      credentials: "include",
+      ...options,
+      signal: controller.signal,
+      headers: options.body instanceof FormData ? options.headers : { "Content-Type": "application/json", ...(options.headers || {}) },
+    });
+    const contentType = response.headers.get("content-type") || "";
+    const data = contentType.includes("application/json") ? await response.json() : {};
+    if (!response.ok) throw Object.assign(new Error(data.error || `No se pudo completar la accion (HTTP ${response.status}). Intenta de nuevo.`), { status: response.status });
+    if (!contentType.includes("application/json")) throw new Error("El servidor no devolvio una respuesta valida. Intenta de nuevo en unos momentos.");
+    return data;
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error("El servidor tardo demasiado en responder. Intenta de nuevo.");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function extractFiles(form, onEvent) {
+  const controller = new AbortController();
+  let idleTimer;
+  const resetIdle = () => {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => controller.abort(), 90000);
+  };
+  resetIdle();
+  const deadline = setTimeout(() => controller.abort(), 240000);
+  let reader;
+  try {
+    const response = await fetch("/api/statements/auto", {
+      method: "POST", body: form, credentials: "include",
+      headers: { Accept: "application/x-ndjson" }, signal: controller.signal,
+    });
+    const type = response.headers.get("content-type") || "";
+    if (!type.includes("application/x-ndjson")) {
+      const data = type.includes("application/json") ? await response.json() : {};
+      if (!response.ok) throw new Error(data.error || `No se pudo procesar el envio (HTTP ${response.status}).`);
+      if (!Array.isArray(data.results)) throw new Error("El servidor no devolvio una respuesta valida.");
+      data.results.forEach(result => onEvent({ type: "result", result }));
+      (data.errors || []).forEach(error => onEvent({ type: "file-error", ...error }));
+      return;
+    }
+    reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "", finished = false;
+    const consume = (line) => {
+      if (!line.trim()) return;
+      const event = JSON.parse(line);
+      if (event.type === "done") finished = true;
+      onEvent(event);
+    };
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      resetIdle();
+      buffer += decoder.decode(value, { stream: true });
+      let index;
+      while ((index = buffer.indexOf("\n")) !== -1) {
+        consume(buffer.slice(0, index));
+        buffer = buffer.slice(index + 1);
+      }
+    }
+    buffer += decoder.decode();
+    consume(buffer);
+    if (!finished) throw new Error("Se interrumpio la conexion antes de terminar el lote.");
+  } catch (error) {
+    const timedOut = controller.signal.aborted;
+    controller.abort();
+    throw new Error(timedOut ? "El servidor dejo de responder. Revisa los pagos guardados antes de volver a subir archivos." : error.message);
+  } finally {
+    reader?.releaseLock();
+    clearTimeout(idleTimer);
+    clearTimeout(deadline);
+  }
 }
 
 function setMessage(target, message, ok = false) {
@@ -274,18 +342,37 @@ $("#autoStatementForm").addEventListener("submit", async (event) => {
   const form = new FormData(formElement);
   const button = formElement.querySelector('button[type="submit"]');
   button.disabled = true;
-  button.textContent = "Extrayendo...";
+  button.textContent = "Subiendo archivos...";
+  setMessage($("#autoProgress"), "Subiendo archivos. El analisis comenzara al terminar la carga.", true);
   $("#autoResults").innerHTML = "";
+  const results = [], errors = [];
+  const started = Date.now();
+  const elapsed = setInterval(() => {
+    button.textContent = `Procesando... ${Math.floor((Date.now() - started) / 1000)} s`;
+  }, 1000);
   try {
-    const result = await api("/api/statements/auto", { method: "POST", body: form });
+    await extractFiles(form, (event) => {
+      if (event.type === "progress") setMessage($("#autoProgress"), `Leyendo ${event.current} de ${event.total}: ${event.filename}.`, true);
+      if (event.type === "result") {
+        results.push(event.result);
+        $("#autoResults").innerHTML = results.map(renderAutoResult).join("");
+        const { card, statement } = event.result;
+        if (!state.cards.some(item => item.id === card.id)) state.cards.push(card);
+        if (!state.statements.some(item => item.id === statement.id)) state.statements.push(statement);
+        render();
+      }
+      if (event.type === "file-error") errors.push(event);
+    });
     formElement.reset();
-    const errors = result.errors || [];
-    setMessage($("#appMessage"), `Se guardaron ${result.results.length} archivo(s).` + (errors.length ? ` Fallaron ${errors.length}: ${errors.map(item => `${item.filename}: ${item.error}`).join("; ")}. Reintenta solo los archivos fallidos.` : ""), !errors.length);
-    $("#autoResults").innerHTML = result.results.map(renderAutoResult).join("");
-    await loadApp();
+    const message = `Se guardaron ${results.length} archivo(s).` + (errors.length ? ` Fallaron ${errors.length}: ${errors.map(item => `${item.filename}: ${item.error}`).join("; ")}. Reintenta solo los archivos fallidos.` : "");
+    setMessage($("#autoProgress"), message, !errors.length);
+    setMessage($("#appMessage"), message, !errors.length);
   } catch (error) {
-    setMessage($("#appMessage"), error.message);
+    const message = `${error.message} Se recibieron ${results.length} resultados. Revisa el resumen antes de reintentar para evitar duplicados.`;
+    setMessage($("#autoProgress"), message);
+    setMessage($("#appMessage"), message);
   } finally {
+    clearInterval(elapsed);
     button.disabled = false;
     button.textContent = "Extraer y guardar";
   }

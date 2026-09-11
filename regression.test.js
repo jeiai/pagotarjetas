@@ -7,7 +7,7 @@ const zlib = require('node:zlib');
 const vm = require('node:vm');
 
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tarjetas-regression-'));
-const { createServer, readZipEntries, verifyPassword } = require('./server');
+const { createServer, readZipEntries, verifyPassword, extractStatementData } = require('./server');
 
 function zip(names = ['capturas/estado.png'], method = 8, flags = 0) {
   const locals = [], centrals = [];
@@ -42,7 +42,7 @@ test('ZIP: stored/deflate, folders, encrypted, unsupported, damaged and file cou
   assert.equal(verifyPassword('password', 'salt:broken'), false);
 });
 
-test('login, restart persistence, ZIP extraction and concurrent login, partial failure', async () => {
+test('login, restart persistence, ZIP extraction, streaming progress and disconnect cancellation', async () => {
   let server = createServer();
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   let base = `http://127.0.0.1:${server.address().port}`;
@@ -83,12 +83,101 @@ test('login, restart persistence, ZIP extraction and concurrent login, partial f
     response = await request('/api/statements/auto', batch, cookie);
     const result = await response.json(); assert.equal(result.results.length, 1); assert.equal(result.errors.length, 1);
     response = await request('/api/statements', null, cookie); assert.equal((await response.json()).statements.length, 2);
+
+    // Progress must arrive before the external service finishes.
+    let finish;
+    const waiting = new Promise(resolve => { finish = resolve; });
+    global.fetch = async (...args) => { await waiting; return success(...args); };
+    response = await realFetch(base + '/api/statements/auto', {method:'POST',headers:{Cookie:cookie,Accept:'application/x-ndjson'},body:form()});
+    assert.match(response.headers.get('content-type'), /x-ndjson/);
+    const reader = response.body.getReader();
+    const first = new TextDecoder().decode((await reader.read()).value);
+    assert.match(first, /"type":"start"/);
+    finish();
+    let rest = '';
+    while (true) { const part = await reader.read(); if(part.done) break; rest += new TextDecoder().decode(part.value); }
+    const events = (first+rest).trim().split('\n').map(JSON.parse);
+    assert.equal(events.filter(event=>event.type==='result').length, 1);
+    assert.equal(events.at(-1).type, 'done');
+    assert.equal(events.at(-1).saved, 1);
+
+    let upstreamStarted, upstreamAborted;
+    const began = new Promise(resolve=> { upstreamStarted=resolve; });
+    const ended = new Promise(resolve=> { upstreamAborted=resolve; });
+    global.fetch = (_, {signal}) => new Promise((resolve,reject) => {
+      upstreamStarted();
+      signal.addEventListener('abort',()=> { upstreamAborted(); reject(new Error('cancelled')); },{once:true});
+    });
+    const cancelled = new AbortController();
+    response = await realFetch(base + '/api/statements/auto', {method:'POST',headers:{Cookie:cookie,Accept:'application/x-ndjson'},body:form(),signal:cancelled.signal});
+    await began; cancelled.abort(); await ended;
     await request('/api/logout', {}, secondCookie);
     assert.equal((await request('/api/me', null, secondCookie)).status, 401);
   } finally {
     global.fetch = realFetch; delete process.env.OPENAI_API_KEY;
     await new Promise(resolve => server.close(resolve));
   }
+});
+
+test('extraction bounds both connection and response-body waits and reports quota/configuration errors', async () => {
+  const previousFetch = global.fetch;
+  process.env.OPENAI_API_KEY = 'mock-only';
+  const file = {filename:'test.png',contentType:'image/png',buffer:Buffer.from('test')};
+  const hang = signal => new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(new Error('aborted')),{once:true}));
+  try {
+    global.fetch = (_, {signal}) => hang(signal);
+    await assert.rejects(extractStatementData(file,{timeoutMs:20}), {status:504});
+    global.fetch = async (_, {signal}) => ({text:()=>hang(signal)});
+    await assert.rejects(extractStatementData(file,{timeoutMs:20}), {status:504});
+    global.fetch = async () => new Response(JSON.stringify({error:{code:'insufficient_quota'}}),{status:429});
+    await assert.rejects(extractStatementData(file), /saldo o cuota/);
+    global.fetch = async () => new Response('{}',{status:401});
+    await assert.rejects(extractStatementData(file), /configurado/);
+    global.fetch = async () => new Response(JSON.stringify({output_text:'not valid JSON'}));
+    await assert.rejects(extractStatementData(file), /datos validos/);
+  } finally { global.fetch = previousFetch; delete process.env.OPENAI_API_KEY; }
+});
+
+function frontendContext(extra = {}) {
+  return vm.createContext({document:{querySelector:()=>({addEventListener(){}}),querySelectorAll:()=>[]},Intl,FormData,console,AbortController,TextDecoder,setTimeout,clearTimeout,...extra});
+}
+
+test('browser reads partial stream chunks, reports truncation and aborts stalled connections', async () => {
+  const source = fs.readFileSync(path.join(__dirname,'public/app.js'),'utf8').replace(/loadApp\(\);\s*$/, '');
+  const events = [];
+  const encoded = new TextEncoder().encode('{"type":"progress","filename":"crédito.png"}\n{"type":"done"}\n');
+  const context = frontendContext({onEvent:e=>events.push(e),fetch:async()=>new Response(new ReadableStream({start(controller){
+    for(const byte of encoded) controller.enqueue(new Uint8Array([byte])); controller.close();
+  }}),{headers:{'Content-Type':'application/x-ndjson'}})});
+  vm.runInContext(source,context);
+  await vm.runInContext('extractFiles(new FormData(),onEvent)',context);
+  assert.equal(events[0].filename,'crédito.png');
+  assert.equal(events.at(-1).type,'done');
+  context.fetch = async()=>new Response('{"type":"start"}\n',{headers:{'Content-Type':'application/x-ndjson'}});
+  await assert.rejects(vm.runInContext('extractFiles(new FormData(),onEvent)',context),/interrumpio/);
+  const timers = new Map();
+  context.setTimeout = (fn,ms)=>{timers.set(ms,fn); return ms;};
+  context.clearTimeout = ms=>timers.delete(ms);
+  context.fetch = (_, {signal}) => new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(new Error('aborted'))));
+  const stalled = vm.runInContext('extractFiles(new FormData(),onEvent)',context);
+  timers.get(90000)();
+  await assert.rejects(stalled,/dejo de responder/);
+  assert.equal(timers.size,0);
+});
+
+test('upload button is released and visible error appears after extraction failure', async () => {
+  const elements = new Map(), listeners = new Map();
+  const node = selector => { if(!elements.has(selector)) elements.set(selector,{style:{},addEventListener:(event,fn)=>listeners.set(selector+event,fn)});return elements.get(selector); };
+  const intervals = new Set();
+  const context = frontendContext({document:{querySelector:node,querySelectorAll:()=>[]},FormData:class {},setInterval:fn=>{intervals.add(fn);return fn;},clearInterval:fn=>intervals.delete(fn)});
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'public/app.js'),'utf8').replace(/loadApp\(\);\s*$/, ''),context);
+  vm.runInContext('extractFiles = async () => { throw new Error("Se agoto el tiempo"); };',context);
+  const button = {};
+  await listeners.get('#autoStatementFormsubmit')({preventDefault(){},currentTarget:{querySelector:selector=>selector.startsWith('input')?{files:[{}]}:button}});
+  assert.equal(button.disabled,false);
+  assert.equal(button.textContent,'Extraer y guardar');
+  assert.match(node('#autoProgress').textContent,/agoto el tiempo/);
+  assert.equal(intervals.size,0);
 });
 
 test('panel keeps authenticated user on server errors; clears on 401', async () => {

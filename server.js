@@ -426,7 +426,7 @@ function parseJsonObject(text) {
   }
 }
 
-async function extractStatementData(file) {
+async function extractStatementData(file, { signal, timeoutMs = 45000 } = {}) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw Object.assign(new Error("Configura OPENAI_API_KEY en Render para extraer datos automaticamente."), { status: 503 });
@@ -453,20 +453,37 @@ async function extractStatementData(file) {
           { type: "input_image", image_url: `data:${file.contentType};base64,${base64}` },
         ];
 
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
-      input: [{ role: "user", content }],
-      text: { format: { type: "json_object" } },
-    }),
-  });
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  signal?.addEventListener("abort", cancel, { once: true });
+  const timer = setTimeout(cancel, timeoutMs);
+  let response, bodyText;
+  try {
+    response = await fetch("https://api.openai.com/v1/responses", {
+      signal: controller.signal,
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+        input: [{ role: "user", content }],
+        text: { format: { type: "json_object" } },
+      }),
+    });
 
-  const bodyText = await response.text();
+    bodyText = await response.text();
+  } catch (error) {
+    console.error("[auto-extract] Request failed", { reason: controller.signal.aborted ? "timeout-or-cancelled" : "connection" });
+    throw Object.assign(new Error(controller.signal.aborted
+      ? "Se agoto el tiempo para leer este archivo. Intenta de nuevo con una captura mas clara o un PDF mas pequeno."
+      : "No se pudo conectar con el servicio de lectura. Intenta de nuevo en unos momentos."), { status: controller.signal.aborted ? 504 : 502 });
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", cancel);
+  }
   let payload = {};
   try {
     payload = bodyText ? JSON.parse(bodyText) : {};
@@ -476,10 +493,17 @@ async function extractStatementData(file) {
   if (!response.ok) {
     console.error("[auto-extract] OpenAI rejected extraction", {
       status: response.status,
-      filename: file.filename,
-      response: payload,
+      code: payload.error?.code,
+      requestId: response.headers.get("x-request-id"),
     });
-    throw Object.assign(new Error("OpenAI rechazo la extraccion. Revisa OPENAI_API_KEY y OPENAI_MODEL en Render."), { status: 502 });
+    const message = response.status === 429
+      ? payload.error?.code === "insufficient_quota"
+        ? "El servicio de lectura no tiene saldo o cuota disponible. El administrador debe revisar la facturacion de OpenAI."
+        : "El servicio de lectura esta ocupado. Espera un momento antes de reintentar."
+      : [401, 403, 404].includes(response.status)
+        ? "El servicio de lectura no esta bien configurado. El administrador debe revisar OPENAI_API_KEY y OPENAI_MODEL en Render."
+        : "El servicio no pudo leer este archivo. Comprueba que sea una captura legible o un PDF sin contrasena.";
+    throw Object.assign(new Error(message), { status: 502 });
   }
 
   const outputText =
@@ -490,6 +514,9 @@ async function extractStatementData(file) {
       .join("\n") ||
     "";
   const extracted = parseJsonObject(outputText);
+  if (!extracted || typeof extracted !== "object" || !Object.keys(extracted).length || payload.status === "incomplete") {
+    throw Object.assign(new Error("La lectura no devolvio datos validos. Prueba una captura mas clara."), { status: 502 });
+  }
   return {
     bankName: sanitizeText(extracted.bankName, 80),
     cardName: sanitizeText(extracted.cardName, 80),
@@ -756,48 +783,78 @@ async function handleApi(req, res, pathname) {
       const fallbackCardId = sanitizeText(parts.cardId, 80);
       const results = [];
       const errors = [];
-
-      for (const file of files) {
-        try {
-          const extracted = await extractStatementData(file);
-          db = readDb();
-          if (!currentUser(req, db)) return sendJson(res, 401, { error: "Tu sesion termino. Inicia sesion de nuevo." });
-          const card = findOrCreateCard(db, user, extracted, fallbackCardId);
-          const needsReview = !extracted.dueDate || !extracted.noInterestAmount || !extracted.totalAmount;
-          const reviewNotes = [
-            extracted.notes,
-            needsReview ? "Revision necesaria: faltan datos importantes extraidos automaticamente." : "",
-            `Confianza IA: ${Math.round((extracted.confidence || 0) * 100)}%`,
-          ]
-            .filter(Boolean)
-            .join(" ");
-          const statement = {
-            id: id("statement"),
-            cardId: card.id,
-            uploadedBy: user.id,
-            period: extracted.period || "Periodo por revisar",
-            dueDate: extracted.dueDate || "",
-            minPayment: extracted.minPayment || 0,
-            noInterestAmount: extracted.noInterestAmount || 0,
-            totalAmount: extracted.totalAmount || 0,
-            notes: sanitizeText(reviewNotes, 500),
-            status: needsReview ? "pendiente" : "pendiente",
-            needsReview,
-            extractedAt: new Date().toISOString(),
-            extractionConfidence: extracted.confidence,
-            file: saveUploadedFile(file),
-            createdAt: new Date().toISOString(),
-          };
-          db.statements.push(statement);
-          writeDb(db);
-          results.push({ statement, card, extracted, needsReview });
-        } catch (error) {
-          errors.push({ filename: file.filename, error: error.status ? error.message : "No se pudo procesar este archivo.", status: error.status || 500 });
-        }
+      const streaming = String(req.headers.accept || "").includes("application/x-ndjson");
+      const controller = new AbortController();
+      const cancel = () => controller.abort();
+      const deadline = setTimeout(cancel, 180000);
+      res.once("close", cancel);
+      const emit = (event) => {
+        if (streaming && !res.destroyed) res.write(JSON.stringify(event) + "\n");
+      };
+      if (streaming) {
+        res.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store", "X-Accel-Buffering": "no" });
+        emit({ type: "start", total: files.length });
       }
+      const heartbeat = streaming ? setInterval(() => emit({ type: "heartbeat" }), 10000) : null;
 
-      if (!results.length) return sendJson(res, errors[0].status, { error: errors[0].error, errors });
-      return sendJson(res, 201, { results, errors });
+      try {
+        for (const file of files) {
+          if (res.destroyed) break;
+          try {
+            if (controller.signal.aborted) throw Object.assign(new Error("Se agoto el tiempo del lote. Reintenta solo los archivos pendientes."), { status: 504 });
+            emit({ type: "progress", filename: file.filename, current: results.length + errors.length + 1, total: files.length });
+            const extracted = await extractStatementData(file, { signal: controller.signal });
+            if (res.destroyed) break;
+            db = readDb();
+            if (!currentUser(req, db)) throw Object.assign(new Error("Tu sesion termino. Inicia sesion de nuevo."), { status: 401 });
+            const card = findOrCreateCard(db, user, extracted, fallbackCardId);
+            const needsReview = !extracted.dueDate || !extracted.noInterestAmount || !extracted.totalAmount;
+            const reviewNotes = [
+              extracted.notes,
+              needsReview ? "Revision necesaria: faltan datos importantes extraidos automaticamente." : "",
+              `Confianza IA: ${Math.round((extracted.confidence || 0) * 100)}%`,
+            ]
+              .filter(Boolean)
+              .join(" ");
+            const statement = {
+              id: id("statement"),
+              cardId: card.id,
+              uploadedBy: user.id,
+              period: extracted.period || "Periodo por revisar",
+              dueDate: extracted.dueDate || "",
+              minPayment: extracted.minPayment || 0,
+              noInterestAmount: extracted.noInterestAmount || 0,
+              totalAmount: extracted.totalAmount || 0,
+              notes: sanitizeText(reviewNotes, 500),
+              status: needsReview ? "pendiente" : "pendiente",
+              needsReview,
+              extractedAt: new Date().toISOString(),
+              extractionConfidence: extracted.confidence,
+              file: saveUploadedFile(file),
+              createdAt: new Date().toISOString(),
+            };
+            db.statements.push(statement);
+            writeDb(db);
+            results.push({ statement, card, extracted, needsReview });
+            emit({ type: "result", result: results.at(-1) });
+          } catch (error) {
+            errors.push({ filename: file.filename, error: error.status ? error.message : "No se pudo procesar este archivo.", status: error.status || 500 });
+            emit({ type: "file-error", ...errors.at(-1) });
+          }
+        }
+
+        if (res.destroyed) return;
+        if (streaming) {
+          emit({ type: "done", saved: results.length, failed: errors.length });
+          return res.end();
+        }
+        if (!results.length) return sendJson(res, errors[0].status, { error: errors[0].error, errors });
+        return sendJson(res, 201, { results, errors });
+      } finally {
+        clearTimeout(deadline);
+        clearInterval(heartbeat);
+        res.removeListener("close", cancel);
+      }
     }
 
     const statementMatch = /^\/api\/statements\/([^/]+)$/.exec(pathname);
@@ -872,4 +929,4 @@ if (require.main === module) createServer().listen(PORT, HOST, () => {
     console.log(`App disponible en http://${HOST}:${PORT}`);
   });
 
-module.exports = { createServer, readZipEntries, collectAutoFiles, verifyPassword };
+module.exports = { createServer, readZipEntries, collectAutoFiles, verifyPassword, extractStatementData };
