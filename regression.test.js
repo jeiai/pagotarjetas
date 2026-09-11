@@ -84,6 +84,19 @@ test('login, restart persistence, ZIP extraction, streaming progress and disconn
     const result = await response.json(); assert.equal(result.results.length, 1); assert.equal(result.errors.length, 1);
     response = await request('/api/statements', null, cookie); assert.equal((await response.json()).statements.length, 2);
 
+    // Account-wide rejections must stop the batch, preserving existing payments.
+    let rejectedCalls = 0;
+    global.fetch = async () => { rejectedCalls++; return new Response(JSON.stringify({error:{code:'credit_balance_exhausted',type:'insufficient_quota'}}),{status:429}); };
+    const rejectedBatch = new FormData(); rejectedBatch.set('documents', new Blob([zip(['one.png','two.png','three.png'])],{type:'application/zip'}),'account-limit.zip');
+    response = await request('/api/statements/auto', rejectedBatch, cookie);
+    assert.equal(response.status,429);
+    const blockedBatch = await response.json();
+    assert.equal(rejectedCalls,1);
+    assert.equal(blockedBatch.errors.length,3);
+    assert.equal(blockedBatch.errors.filter(item=>item.notAttempted).length,2);
+    assert.match(blockedBatch.error,/sin saldo/);
+    response = await request('/api/statements', null, cookie); assert.equal((await response.json()).statements.length,2);
+
     // Progress must arrive before the external service finishes.
     let finish;
     const waiting = new Promise(resolve => { finish = resolve; });
@@ -131,6 +144,20 @@ test('extraction bounds both connection and response-body waits and reports quot
     await assert.rejects(extractStatementData(file,{timeoutMs:20}), {status:504});
     global.fetch = async () => new Response(JSON.stringify({error:{code:'insufficient_quota'}}),{status:429});
     await assert.rejects(extractStatementData(file), /saldo o cuota/);
+    for (const [code,expected] of [
+      ['credit_balance_exhausted',/sin saldo/],
+      ['organization_spend_limit_exceeded',/limite de gasto/],
+      ['project_spend_limit_exceeded',/proyecto.*limite de gasto/i],
+      ['organization_usage_limit_exceeded',/limite de uso/],
+      ['rate_limit_exceeded',/limite temporal/],
+      ['slow_down',/limite temporal/],
+      ['unrecognized',/registros de Render/],
+    ]) {
+      global.fetch = async()=>new Response(JSON.stringify({error:{code}}),{status:429});
+      await assert.rejects(extractStatementData(file),error=>error.status===429 && error.stopBatch===true && expected.test(error.message));
+    }
+    global.fetch = async()=>new Response(JSON.stringify({error:{type:'insufficient_quota'}}),{status:429});
+    await assert.rejects(extractStatementData(file),/saldo o cuota/);
     global.fetch = async () => new Response('{}',{status:401});
     await assert.rejects(extractStatementData(file), /configurado/);
     global.fetch = async () => new Response(JSON.stringify({output_text:'not valid JSON'}));
@@ -178,6 +205,9 @@ test('upload button is released and visible error appears after extraction failu
   assert.equal(button.textContent,'Extraer y guardar');
   assert.match(node('#autoProgress').textContent,/agoto el tiempo/);
   assert.equal(intervals.size,0);
+  const summary = vm.runInContext('extractionSummary([], [{filename:"one.png",error:"Sin saldo"},{filename:"two.png",error:"Sin saldo",notAttempted:true}])',context);
+  assert.equal(summary.match(/Sin saldo/g).length,1);
+  assert.match(summary,/no se enviaron 1/);
 });
 
 test('panel keeps authenticated user on server errors; clears on 401', async () => {

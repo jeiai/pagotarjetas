@@ -364,7 +364,7 @@ $("#autoStatementForm").addEventListener("submit", async (event) => {
       if (event.type === "file-error") errors.push(event);
     });
     formElement.reset();
-    const message = `Se guardaron ${results.length} archivo(s).` + (errors.length ? ` Fallaron ${errors.length}: ${errors.map(item => `${item.filename}: ${item.error}`).join("; ")}. Reintenta solo los archivos fallidos.` : "");
+    const message = extractionSummary(results, errors);
     setMessage($("#autoProgress"), message, !errors.length);
     setMessage($("#appMessage"), message, !errors.length);
   } catch (error) {
@@ -377,6 +377,19 @@ $("#autoStatementForm").addEventListener("submit", async (event) => {
     button.textContent = "Extraer y guardar";
   }
 });
+
+function extractionSummary(results, errors) {
+  const groups = new Map();
+  for (const item of errors) {
+    const names = groups.get(item.error) || [];
+    names.push(item.filename);
+    groups.set(item.error, names);
+  }
+  const skipped = errors.filter(item => item.notAttempted).length;
+  const details = [...groups].map(([message, names]) => `${message} Archivos pendientes: ${names.join(", ")}.`).join(" ");
+  return `Se guardaron ${results.length} archivo(s).` + (errors.length
+    ? ` Quedaron ${errors.length} sin procesar.${skipped ? ` Se detuvo el lote y no se enviaron ${skipped} archivo(s) restantes al servicio.` : ""} ${details}` : "");
+}
 
 function renderAutoResult(item) {
   const statement = item.statement;

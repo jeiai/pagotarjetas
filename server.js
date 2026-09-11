@@ -491,19 +491,35 @@ async function extractStatementData(file, { signal, timeoutMs = 45000 } = {}) {
     payload = { raw: bodyText };
   }
   if (!response.ok) {
+    const providerCode = sanitizeText(payload.error?.code, 100);
+    const providerType = sanitizeText(payload.error?.type, 100);
     console.error("[auto-extract] OpenAI rejected extraction", {
       status: response.status,
-      code: payload.error?.code,
+      code: providerCode,
+      type: providerType,
       requestId: response.headers.get("x-request-id"),
     });
+    const accountErrors = {
+      credit_balance_exhausted: "La cuenta de OpenAI usada por el sitio se quedo sin saldo para leer archivos. Revisa su facturacion antes de reintentar.",
+      organization_spend_limit_exceeded: "La cuenta de OpenAI alcanzo su limite de gasto. Revisa los limites de la organizacion antes de reintentar.",
+      project_spend_limit_exceeded: "El proyecto de OpenAI usado por el sitio alcanzo su limite de gasto. Revisa los limites de ese proyecto antes de reintentar.",
+      organization_usage_limit_exceeded: "La cuenta de OpenAI alcanzo su limite de uso autorizado. Revisa los limites de la organizacion antes de reintentar.",
+      insufficient_quota: "El servicio de lectura no tiene saldo o cuota disponible. Revisa la facturacion y los limites de la cuenta de OpenAI.",
+    };
     const message = response.status === 429
-      ? payload.error?.code === "insufficient_quota"
-        ? "El servicio de lectura no tiene saldo o cuota disponible. El administrador debe revisar la facturacion de OpenAI."
-        : "El servicio de lectura esta ocupado. Espera un momento antes de reintentar."
+      ? Object.hasOwn(accountErrors, providerCode) ? accountErrors[providerCode]
+        : providerType === "insufficient_quota" ? accountErrors.insufficient_quota
+        : ["rate_limit_exceeded", "slow_down"].includes(providerCode) || providerType === "rate_limit_error"
+          ? "OpenAI alcanzo un limite temporal de solicitudes. Espera antes de reintentar con un solo archivo."
+          : "OpenAI rechazo la lectura por un limite de cuenta o de solicitudes (429). Revisa el motivo en los registros de Render antes de reintentar."
       : [401, 403, 404].includes(response.status)
         ? "El servicio de lectura no esta bien configurado. El administrador debe revisar OPENAI_API_KEY y OPENAI_MODEL en Render."
         : "El servicio no pudo leer este archivo. Comprueba que sea una captura legible o un PDF sin contrasena.";
-    throw Object.assign(new Error(message), { status: 502 });
+    throw Object.assign(new Error(message), {
+      status: response.status === 429 ? 429 : 502,
+      providerCode,
+      stopBatch: [401, 403, 404, 429].includes(response.status),
+    });
   }
 
   const outputText =
@@ -783,6 +799,7 @@ async function handleApi(req, res, pathname) {
       const fallbackCardId = sanitizeText(parts.cardId, 80);
       const results = [];
       const errors = [];
+      let serviceError;
       const streaming = String(req.headers.accept || "").includes("application/x-ndjson");
       const controller = new AbortController();
       const cancel = () => controller.abort();
@@ -800,6 +817,11 @@ async function handleApi(req, res, pathname) {
       try {
         for (const file of files) {
           if (res.destroyed) break;
+          if (serviceError) {
+            errors.push({ filename: file.filename, error: serviceError.message, status: serviceError.status, notAttempted: true });
+            emit({ type: "file-error", ...errors.at(-1) });
+            continue;
+          }
           try {
             if (controller.signal.aborted) throw Object.assign(new Error("Se agoto el tiempo del lote. Reintenta solo los archivos pendientes."), { status: 504 });
             emit({ type: "progress", filename: file.filename, current: results.length + errors.length + 1, total: files.length });
@@ -838,6 +860,7 @@ async function handleApi(req, res, pathname) {
             results.push({ statement, card, extracted, needsReview });
             emit({ type: "result", result: results.at(-1) });
           } catch (error) {
+            if (error.stopBatch) serviceError = error;
             errors.push({ filename: file.filename, error: error.status ? error.message : "No se pudo procesar este archivo.", status: error.status || 500 });
             emit({ type: "file-error", ...errors.at(-1) });
           }
