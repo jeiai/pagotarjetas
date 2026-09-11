@@ -22,6 +22,8 @@ Cada persona crea su cuenta con correo y contrasena. Los datos se muestran solo 
 
 Los usuarios, tarjetas y estados se guardan en `data/db.json`. Los archivos subidos se guardan en `uploads/`.
 
+Para usar un disco persistente, configura `DATA_DIR` con su directorio de montaje. La base se guardara en `DATA_DIR/db.json` y los documentos en `DATA_DIR/uploads/`. Al cambiar de ubicacion, copia antes la base y los archivos existentes a esas rutas. Sin almacenamiento persistente, un despliegue que reemplace el sistema de archivos puede perder cuentas y sesiones. Esta opcion admite una sola instancia del servidor.
+
 ## Reset de contrasena por correo
 
 Para enviar codigos temporales en Render, configura estas variables de entorno:
@@ -40,3 +42,7 @@ Para leer capturas automaticamente, configura estas variables en Render:
 - `OPENAI_MODEL`: modelo con vision, opcional. Si no lo configuras, usa `gpt-4.1-mini`.
 
 La app acepta hasta 15 archivos PNG/JPG/PDF a la vez, o un ZIP que contenga esos formatos.
+
+El limite de 15 incluye los documentos dentro del ZIP. Cada documento descomprimido puede pesar hasta 12 MB y el envio completo hasta 80 MB. Se admiten ZIP estandar sin contrasena, con compresion Deflate o sin compresion; no ZIP64 ni archivos divididos. Si falla el analisis de un documento, se conservan los resultados correctos y se muestran los archivos que deben reintentarse. La carga manual no admite ZIP: usa **Carga automatica**.
+
+Ejecuta `npm test` para probar login, persistencia al reiniciar, errores del panel, lectura de ZIP y procesamiento parcial. Las pruebas usan datos temporales y respuestas de IA simuladas; no comprueban credenciales ni vision en produccion.

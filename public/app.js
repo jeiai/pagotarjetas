@@ -16,7 +16,8 @@ async function api(path, options = {}) {
   });
   const contentType = response.headers.get("content-type") || "";
   const data = contentType.includes("application/json") ? await response.json() : {};
-  if (!response.ok) throw new Error(data.error || "No se pudo completar la accion.");
+  if (!response.ok) throw Object.assign(new Error(data.error || `No se pudo completar la accion (HTTP ${response.status}). Intenta de nuevo.`), { status: response.status });
+  if (!contentType.includes("application/json")) throw new Error("El servidor no devolvio una respuesta valida. Intenta de nuevo en unos momentos.");
   return data;
 }
 
@@ -140,8 +141,13 @@ async function loadApp() {
     const [cards, statements] = await Promise.all([api("/api/cards"), api("/api/statements")]);
     state.cards = cards.cards;
     state.statements = statements.statements;
-  } catch {
-    state.user = null;
+  } catch (error) {
+    if (error.status === 401) {
+      state.user = null;
+      state.cards = [];
+      state.statements = [];
+    }
+    setMessage($(state.user ? "#appMessage" : "#authMessage"), error.status === 401 ? "Inicia sesion para continuar." : `No se pudo cargar el panel: ${error.message}`);
   }
   render();
 }
@@ -162,13 +168,20 @@ $("#loginForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const formElement = event.currentTarget;
   const form = new FormData(formElement);
+  const button = formElement.querySelector('button[type="submit"]');
+  button.disabled = true;
+  button.textContent = "Entrando...";
   try {
-    await api("/api/login", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) });
+    const result = await api("/api/login", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) });
+    state.user = result.user;
     setMessage($("#authMessage"), "");
     formElement.reset();
     await loadApp();
   } catch (error) {
     setMessage($("#authMessage"), error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Entrar";
   }
 });
 
@@ -266,7 +279,8 @@ $("#autoStatementForm").addEventListener("submit", async (event) => {
   try {
     const result = await api("/api/statements/auto", { method: "POST", body: form });
     formElement.reset();
-    setMessage($("#appMessage"), `Se procesaron ${result.results.length} archivo(s).`, true);
+    const errors = result.errors || [];
+    setMessage($("#appMessage"), `Se guardaron ${result.results.length} archivo(s).` + (errors.length ? ` Fallaron ${errors.length}: ${errors.map(item => `${item.filename}: ${item.error}`).join("; ")}. Reintenta solo los archivos fallidos.` : ""), !errors.length);
     $("#autoResults").innerHTML = result.results.map(renderAutoResult).join("");
     await loadApp();
   } catch (error) {

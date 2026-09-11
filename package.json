@@ -4,6 +4,7 @@
   "description": "App familiar para registrar estados de cuenta de tarjetas de credito.",
   "main": "server.js",
   "scripts": {
+    "test": "node --test regression.test.js",
     "start": "node server.js",
     "dev": "node server.js"
   },

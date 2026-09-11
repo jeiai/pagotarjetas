@@ -9,8 +9,8 @@ const PORT = Number(process.env.PORT || 4173);
 const HOST = process.env.HOST || "0.0.0.0";
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, "public");
-const DATA_DIR = path.join(ROOT, "data");
-const UPLOADS_DIR = path.join(ROOT, "uploads");
+const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT, "data");
+const UPLOADS_DIR = process.env.DATA_DIR ? path.join(DATA_DIR, "uploads") : path.join(ROOT, "uploads");
 const DB_FILE = path.join(DATA_DIR, "db.json");
 const MAX_BODY = 80 * 1024 * 1024;
 const MAX_AUTO_FILES = 15;
@@ -72,7 +72,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
 
 function verifyPassword(password, stored) {
   const [salt, expected] = String(stored || "").split(":");
-  if (!salt || !expected) return false;
+  if (!salt || !/^[a-f0-9]{64}$/i.test(expected || "")) return false;
   const actual = hashPassword(password, salt).split(":")[1];
   return crypto.timingSafeEqual(Buffer.from(actual), Buffer.from(expected));
 }
@@ -153,7 +153,6 @@ function readBody(req) {
       total += chunk.length;
       if (total > MAX_BODY) {
         reject(Object.assign(new Error("Archivo demasiado grande."), { status: 413 }));
-        req.destroy();
         return;
       }
       chunks.push(chunk);
@@ -175,7 +174,10 @@ function cookieMap(req) {
       .split(";")
       .map((item) => item.trim().split("="))
       .filter(([key, value]) => key && value)
-      .map(([key, value]) => [key, decodeURIComponent(value)])
+      .map(([key, value]) => {
+        try { return [key, decodeURIComponent(value)]; }
+        catch { return [key, ""]; }
+      })
   );
 }
 
@@ -281,9 +283,13 @@ function asFileList(value) {
 function readZipEntries(file) {
   const buffer = file.buffer;
   const entries = [];
+  const invalid = (message = "El ZIP esta danado o incompleto. Vuelve a comprimir los archivos.") => Object.assign(new Error(message), { status: 400 });
+  const check = (offset, size) => {
+    if (offset < 0 || offset + size > buffer.length) throw invalid();
+  };
   let eocdOffset = -1;
   for (let i = buffer.length - 22; i >= Math.max(0, buffer.length - 65557); i -= 1) {
-    if (buffer.readUInt32LE(i) === 0x06054b50) {
+    if (buffer.readUInt32LE(i) === 0x06054b50 && i + 22 + buffer.readUInt16LE(i + 20) === buffer.length) {
       eocdOffset = i;
       break;
     }
@@ -294,35 +300,53 @@ function readZipEntries(file) {
 
   const totalEntries = buffer.readUInt16LE(eocdOffset + 10);
   const centralOffset = buffer.readUInt32LE(eocdOffset + 16);
+  if (buffer.readUInt16LE(eocdOffset + 4) || buffer.readUInt16LE(eocdOffset + 6) ||
+      totalEntries === 65535 || centralOffset === 0xffffffff) {
+    throw invalid("No se admite ZIP64 ni ZIP dividido en partes. Crea un ZIP estandar.");
+  }
   let offset = centralOffset;
 
   for (let i = 0; i < totalEntries; i += 1) {
-    if (buffer.readUInt32LE(offset) !== 0x02014b50) break;
+    check(offset, 46);
+    if (buffer.readUInt32LE(offset) !== 0x02014b50) throw invalid();
+    const flags = buffer.readUInt16LE(offset + 8);
     const method = buffer.readUInt16LE(offset + 10);
+    const expectedCrc = buffer.readUInt32LE(offset + 16);
     const compressedSize = buffer.readUInt32LE(offset + 20);
     const uncompressedSize = buffer.readUInt32LE(offset + 24);
     const fileNameLength = buffer.readUInt16LE(offset + 28);
     const extraLength = buffer.readUInt16LE(offset + 30);
     const commentLength = buffer.readUInt16LE(offset + 32);
     const localOffset = buffer.readUInt32LE(offset + 42);
+    check(offset + 46, fileNameLength + extraLength + commentLength);
     const filename = buffer.slice(offset + 46, offset + 46 + fileNameLength).toString("utf8");
     offset += 46 + fileNameLength + extraLength + commentLength;
 
     if (!filename || filename.endsWith("/") || filename.includes("__MACOSX")) continue;
-    if (buffer.readUInt32LE(localOffset) !== 0x04034b50) continue;
+    if (![".png", ".jpg", ".jpeg", ".pdf"].includes(path.extname(filename).toLowerCase())) continue;
+    if (flags & 1) throw invalid("El ZIP tiene archivos protegidos con contrasena. Crea un ZIP sin contrasena.");
+    if (entries.length >= MAX_AUTO_FILES) throw invalid("Puedes procesar maximo 15 capturas o PDFs a la vez, incluyendo los del ZIP.");
+    if (uncompressedSize > MAX_SINGLE_FILE) throw invalid(`El archivo ${safeUploadName(filename)} supera el limite de 12 MB descomprimido.`);
+    check(localOffset, 30);
+    if (buffer.readUInt32LE(localOffset) !== 0x04034b50) throw invalid();
     const localNameLength = buffer.readUInt16LE(localOffset + 26);
     const localExtraLength = buffer.readUInt16LE(localOffset + 28);
     const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    check(dataStart, compressedSize);
     const compressed = buffer.slice(dataStart, dataStart + compressedSize);
     let data;
     if (method === 0) {
       data = compressed;
     } else if (method === 8) {
-      data = zlib.inflateRawSync(compressed);
+      try {
+        data = zlib.inflateRawSync(compressed, { maxOutputLength: MAX_SINGLE_FILE });
+      } catch {
+        throw invalid(`No se pudo descomprimir ${safeUploadName(filename)}. Esta danado o supera 12 MB.`);
+      }
     } else {
-      continue;
+      throw invalid("El ZIP usa una compresion no compatible. Vuelve a crearlo con compresion estandar (Deflate).");
     }
-    if (uncompressedSize && data.length !== uncompressedSize) continue;
+    if (data.length !== uncompressedSize || crc32(data) !== expectedCrc) throw invalid();
     const entry = {
       filename: safeUploadName(filename),
       contentType: detectMime(filename),
@@ -332,6 +356,15 @@ function readZipEntries(file) {
   }
 
   return entries;
+}
+
+function crc32(buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
 }
 
 function collectAutoFiles(parts) {
@@ -512,11 +545,13 @@ function saveUploadedFile(file) {
 }
 
 async function handleApi(req, res, pathname) {
-  const db = readDb();
+  let db;
 
   try {
+    db = readDb();
     if (req.method === "POST" && pathname === "/api/register") {
       const body = await readJson(req);
+      db = readDb();
       const email = normalizeEmail(body.email);
       const password = String(body.password || "");
       const name = sanitizeText(body.name, 80);
@@ -542,7 +577,8 @@ async function handleApi(req, res, pathname) {
 
     if (req.method === "POST" && pathname === "/api/login") {
       const body = await readJson(req);
-      const user = db.users.find((item) => item.email === normalizeEmail(body.email));
+      db = readDb();
+      const user = db.users.find((item) => normalizeEmail(item.email) === normalizeEmail(body.email));
       if (!user || !verifyPassword(body.password, user.passwordHash)) {
         return sendJson(res, 401, { error: "Correo o contrasena incorrectos." });
       }
@@ -554,6 +590,7 @@ async function handleApi(req, res, pathname) {
 
     if (req.method === "POST" && pathname === "/api/request-password-reset") {
       const body = await readJson(req);
+      db = readDb();
       const email = normalizeEmail(body.email);
       if (!validEmail(email)) {
         return sendJson(res, 400, { error: "Escribe un correo valido." });
@@ -591,6 +628,7 @@ async function handleApi(req, res, pathname) {
 
     if (req.method === "POST" && pathname === "/api/reset-password") {
       const body = await readJson(req);
+      db = readDb();
       const email = normalizeEmail(body.email);
       const code = sanitizeText(body.code, 12);
       const password = String(body.password || "");
@@ -647,6 +685,7 @@ async function handleApi(req, res, pathname) {
 
     if (req.method === "POST" && pathname === "/api/cards") {
       const body = await readJson(req);
+      db = readDb();
       const card = {
         id: id("card"),
         ownerId: user.id,
@@ -681,6 +720,8 @@ async function handleApi(req, res, pathname) {
 
     if (req.method === "POST" && pathname === "/api/statements") {
       const parts = parseMultipart(await readBody(req), req.headers["content-type"]);
+      db = readDb();
+      if (!requireUser(req, res, db)) return;
       const card = groupCards(db, user).find((item) => item.id === parts.cardId);
       if (!card) return sendJson(res, 400, { error: "Selecciona una tarjeta valida." });
       const file = parts.document;
@@ -714,49 +755,61 @@ async function handleApi(req, res, pathname) {
       const files = collectAutoFiles(parts);
       const fallbackCardId = sanitizeText(parts.cardId, 80);
       const results = [];
+      const errors = [];
 
       for (const file of files) {
-        const extracted = await extractStatementData(file);
-        const card = findOrCreateCard(db, user, extracted, fallbackCardId);
-        const needsReview = !extracted.dueDate || !extracted.noInterestAmount || !extracted.totalAmount;
-        const reviewNotes = [
-          extracted.notes,
-          needsReview ? "Revision necesaria: faltan datos importantes extraidos automaticamente." : "",
-          `Confianza IA: ${Math.round((extracted.confidence || 0) * 100)}%`,
-        ]
-          .filter(Boolean)
-          .join(" ");
-        const statement = {
-          id: id("statement"),
-          cardId: card.id,
-          uploadedBy: user.id,
-          period: extracted.period || "Periodo por revisar",
-          dueDate: extracted.dueDate || "",
-          minPayment: extracted.minPayment || 0,
-          noInterestAmount: extracted.noInterestAmount || 0,
-          totalAmount: extracted.totalAmount || 0,
-          notes: sanitizeText(reviewNotes, 500),
-          status: needsReview ? "pendiente" : "pendiente",
-          needsReview,
-          extractedAt: new Date().toISOString(),
-          extractionConfidence: extracted.confidence,
-          file: saveUploadedFile(file),
-          createdAt: new Date().toISOString(),
-        };
-        db.statements.push(statement);
-        results.push({ statement, card, extracted, needsReview });
+        try {
+          const extracted = await extractStatementData(file);
+          db = readDb();
+          if (!currentUser(req, db)) return sendJson(res, 401, { error: "Tu sesion termino. Inicia sesion de nuevo." });
+          const card = findOrCreateCard(db, user, extracted, fallbackCardId);
+          const needsReview = !extracted.dueDate || !extracted.noInterestAmount || !extracted.totalAmount;
+          const reviewNotes = [
+            extracted.notes,
+            needsReview ? "Revision necesaria: faltan datos importantes extraidos automaticamente." : "",
+            `Confianza IA: ${Math.round((extracted.confidence || 0) * 100)}%`,
+          ]
+            .filter(Boolean)
+            .join(" ");
+          const statement = {
+            id: id("statement"),
+            cardId: card.id,
+            uploadedBy: user.id,
+            period: extracted.period || "Periodo por revisar",
+            dueDate: extracted.dueDate || "",
+            minPayment: extracted.minPayment || 0,
+            noInterestAmount: extracted.noInterestAmount || 0,
+            totalAmount: extracted.totalAmount || 0,
+            notes: sanitizeText(reviewNotes, 500),
+            status: needsReview ? "pendiente" : "pendiente",
+            needsReview,
+            extractedAt: new Date().toISOString(),
+            extractionConfidence: extracted.confidence,
+            file: saveUploadedFile(file),
+            createdAt: new Date().toISOString(),
+          };
+          db.statements.push(statement);
+          writeDb(db);
+          results.push({ statement, card, extracted, needsReview });
+        } catch (error) {
+          errors.push({ filename: file.filename, error: error.status ? error.message : "No se pudo procesar este archivo.", status: error.status || 500 });
+        }
       }
 
-      writeDb(db);
-      return sendJson(res, 201, { results });
+      if (!results.length) return sendJson(res, errors[0].status, { error: errors[0].error, errors });
+      return sendJson(res, 201, { results, errors });
     }
 
     const statementMatch = /^\/api\/statements\/([^/]+)$/.exec(pathname);
     if (statementMatch) {
-      const statement = groupStatements(db, user).find((item) => item.id === statementMatch[1]);
+      let statement = groupStatements(db, user).find((item) => item.id === statementMatch[1]);
       if (!statement) return sendJson(res, 404, { error: "Estado de cuenta no encontrado." });
       if (req.method === "PUT") {
         const body = await readJson(req);
+        db = readDb();
+        if (!requireUser(req, res, db)) return;
+        statement = groupStatements(db, user).find((item) => item.id === statementMatch[1]);
+        if (!statement) return sendJson(res, 404, { error: "Estado de cuenta no encontrado." });
         const next = sanitizeText(body.status, 20);
         if (!["pendiente", "programado", "pagado"].includes(next)) {
           return sendJson(res, 400, { error: "Estado invalido." });
@@ -806,13 +859,17 @@ function serveStatic(req, res, pathname) {
   });
 }
 
-ensureStorage();
-http
-  .createServer((req, res) => {
+function createServer() {
+  ensureStorage();
+  return http.createServer((req, res) => {
     const { pathname } = new URL(req.url, `http://${req.headers.host}`);
     if (pathname.startsWith("/api/")) return handleApi(req, res, pathname);
     return serveStatic(req, res, decodeURIComponent(pathname));
-  })
-  .listen(PORT, HOST, () => {
+  });
+}
+
+if (require.main === module) createServer().listen(PORT, HOST, () => {
     console.log(`App disponible en http://${HOST}:${PORT}`);
   });
+
+module.exports = { createServer, readZipEntries, collectAutoFiles, verifyPassword };
