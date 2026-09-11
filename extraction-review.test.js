@@ -22,6 +22,34 @@ test('minimum distinguishes visible values, explicit zero, missing and unrelated
   assert.equal(normalizeExtraction({...base,dueDate:'2028-02-29'}).dueDate,'2028-02-29');
 });
 
+test('payment tiles accept a standalone minimum label without accepting unrelated minimums',()=>{
+  for (const label of ['Mínimo $125.50', '$125.50\nMínimo', 'Mínimo: MXN $125.50', 'Pago de tarjeta — $125.50 Mínimo', 'Pago de la tarjeta: Mínimo $125.50']) {
+    assert.equal(normalizeExtraction({...base,evidence:{...base.evidence,minPayment:label}}).minPayment,125.50,label);
+  }
+  for (const label of ['Depósito mínimo $125.50', 'Retiro mínimo $125.50', 'Crédito mínimo $125.50', 'Mínimo + mensualidad $125.50', 'Pago mínimo y cuotas $125.50', 'Pago mensual completo $125.50', 'Disponible en Crédito -$125.50']) {
+    assert.equal(normalizeExtraction({...base,evidence:{...base.evidence,minPayment:label}}).minPayment,null,label);
+  }
+  assert.equal(normalizeExtraction({...base,minPayment:0,evidence:{...base.evidence,minPayment:'$0.00 Mínimo'}}).minPayment,0);
+});
+
+test('transcribed payment screen examples preserve distinct amounts and absent minimums',()=>{
+  // Synthetic values for five layouts; no customer screenshots or amounts are fixtures.
+  const examples = [
+    {minPayment:125.50,noInterestAmount:3560.75,totalAmount:4600.25,evidence:base.evidence},
+    {minPayment:210.25,noInterestAmount:null,totalAmount:1800.50,evidence:{minPayment:'Pago mínimo $210.25',noInterestAmount:'',totalAmount:'Saldo total $1,800.50'},notes:'Pago total $1,700.00; monto vencido $1,700.00.'},
+    {minPayment:null,noInterestAmount:null,totalAmount:2400.25,evidence:{minPayment:'',noInterestAmount:'',totalAmount:'Saldo actual $2,400.25'},dueDate:null,notes:'Fecha de corte 18 SEP; pago mínimo no visible.'},
+    {minPayment:null,noInterestAmount:null,totalAmount:3600.75,evidence:{minPayment:'',noInterestAmount:'',totalAmount:'Deuda total $3,600.75'},dueDate:null,notes:'Más opciones de pago después del corte.'},
+    {minPayment:80,noInterestAmount:null,totalAmount:950.25,evidence:{minPayment:'$80 Mínimo',noInterestAmount:'',totalAmount:'Saldo total $950.25'},dueDate:null,lastFour:'',notes:'Pago mensual completo $900.00; paga en 4 días; varias miniaturas de tarjetas.'},
+  ];
+  for (const example of examples) {
+    const result=normalizeExtraction(example);
+    for (const field of ['minPayment','noInterestAmount','totalAmount']) assert.equal(result[field],example[field]);
+    if (example.dueDate===null) assert.equal(result.dueDate,'');
+    if (example.notes) assert.equal(result.notes,example.notes);
+  }
+  assert.equal(normalizeExtraction(examples[4]).lastFour,'');
+});
+
 test('vision request requires typed nullable amounts and evidence, without extra AI calls',async()=>{
   const previousFetch=global.fetch, previousKey=process.env.OPENAI_API_KEY;
   process.env.OPENAI_API_KEY='mock-only';
