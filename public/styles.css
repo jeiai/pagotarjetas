@@ -433,6 +433,28 @@ textarea:focus {
   gap: 8px;
 }
 
+.record-review {
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  min-width: 0;
+}
+
+.record-review summary {
+  cursor: pointer;
+  color: #147a6f;
+  font-weight: 800;
+}
+
+.record-review p, .record-review small {
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.review-badge { color: #a04444 !important; }
+.statement-preview { max-width: 100%; max-height: 400px; object-fit: contain; margin: 12px 0; }
+.review-form { margin-top: 16px; }
+
 .record-actions a,
 .record-actions button,
 .record-actions select {

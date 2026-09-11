@@ -108,6 +108,7 @@
           </article>
         </section>
 
+        <p class="form-message" id="summaryReview" role="status"></p>
         <section class="workspace">
           <aside class="side-panel">
             <h2>Nueva tarjeta</h2>
@@ -149,6 +150,7 @@
               <div>
                 <h2>Carga automatica</h2>
                 <p>Sube PNG, JPG, PDF o un ZIP sin contrasena. Maximo 15 documentos en total, incluidos los del ZIP; 12 MB por documento descomprimido y 80 MB por envio.</p>
+                <p>Incluye la etiqueta Pago minimo y su importe legibles. Los datos se guardan para revision y entran al resumen cuando los confirmas.</p>
               </div>
               <label>
                 Tarjeta de respaldo
@@ -164,7 +166,7 @@
                   required
                 />
               </label>
-              <button class="primary-btn full" type="submit">Extraer y guardar</button>
+              <button class="primary-btn full" type="submit">Extraer para revisar</button>
             </form>
             <p class="form-message" id="autoProgress" role="status" aria-live="polite"></p>
             <div class="auto-results" id="autoResults"></div>
@@ -184,7 +186,7 @@
               </label>
               <label>
                 Pago minimo
-                <input name="minPayment" type="number" min="0" step="0.01" placeholder="0.00" />
+                <input name="minPayment" type="number" min="0" step="0.01" placeholder="0.00" required />
               </label>
               <label>
                 Para no generar intereses

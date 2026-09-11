@@ -39,7 +39,7 @@ Si el codigo no llega, revisa los logs del servicio en Render. La app escribe si
 Para leer capturas automaticamente, configura estas variables en Render:
 
 - `OPENAI_API_KEY`: API key de OpenAI.
-- `OPENAI_MODEL`: modelo con vision, opcional. Si no lo configuras, usa `gpt-4.1-mini`.
+- `OPENAI_MODEL`: modelo con vision y salidas estructuradas (`json_schema`), opcional. Si no lo configuras, usa `gpt-4.1-mini`.
 
 La app acepta hasta 15 archivos PNG/JPG/PDF a la vez, o un ZIP que contenga esos formatos.
 
@@ -47,6 +47,12 @@ El limite de 15 incluye los documentos dentro del ZIP. Cada documento descomprim
 
 Ejecuta `npm test` para probar login, persistencia al reiniciar, errores del panel, lectura de ZIP y procesamiento parcial. Las pruebas usan datos temporales y respuestas de IA simuladas; no comprueban credenciales ni vision en produccion.
 
-La carga automatica muestra progreso por documento y actualiza los pagos conforme se guardan. Cada lectura tiene un limite de 45 segundos y el lote completo, de 3 minutos de analisis. Si se interrumpe la conexion, revisa los pagos ya guardados antes de reintentar. El navegador cancela la espera tras 90 segundos sin noticias del servidor o 4 minutos desde el inicio del envio. Los mensajes distinguen espera agotada, problemas de conexion, configuracion y saldo/cuota de OpenAI. No se reintentan documentos automaticamente.
+La carga automatica muestra progreso por documento y conserva cada archivo y lectura para revision. Cada lectura tiene un limite de 45 segundos y el lote completo, de 3 minutos de analisis. Si se interrumpe la conexion, revisa los archivos ya recibidos antes de reintentar. El navegador cancela la espera tras 90 segundos sin noticias del servidor o 4 minutos desde el inicio del envio. Los mensajes distinguen espera agotada, problemas de conexion, configuracion y saldo/cuota de OpenAI. No se reintentan documentos automaticamente.
+
+## Revisar y corregir importes
+
+La IA debe transcribir la etiqueta y el importe que sustentan cada monto. El pago minimo se solicita por separado del pago para no generar intereses, del saldo total y de los pagos minimos mas cuotas. Un dato ausente, ilegible o ambiguo se guarda como `null` y aparece como **No identificado**, nunca como un cero supuesto. Esto reduce errores, pero la evidencia transcrita tambien debe cotejarse con el original.
+
+En **Pagos registrados**, abre **Revisar y confirmar**, consulta el archivo original y corrige la tarjeta, el periodo, la fecha y los tres montos. Al pulsar **Confirmar importes** se actualiza el resumen. Se aceptan ceros reales; no se permiten montos vacios o negativos. Todos los registros automaticos sin confirmacion quedan fuera del resumen, incluidos los de versiones anteriores: sus ceros no se modifican y se avisa que pueden representar datos que no se leyeron. Las correcciones conservan el archivo, los valores extraidos y un historial de valores anteriores; no requieren volver a subir la captura ni llamar a la IA.
 
 Ante un rechazo de cuenta (401/403/404/429), se detiene el envio de los archivos restantes. Para diagnosticar un 429, busca `[auto-extract] OpenAI rejected extraction` en los logs de Render y consulta `code` y `type`: `credit_balance_exhausted` indica saldo agotado; `project_spend_limit_exceeded`, `organization_spend_limit_exceeded` y `organization_usage_limit_exceeded` indican limites de cuenta; `rate_limit_exceeded` y `slow_down` indican limites temporales. Un error de saldo o limite de cuenta no se resuelve reenviando los archivos. Los mensajes repetidos se agrupan en pantalla y los documentos no enviados se identifican como pendientes.

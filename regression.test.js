@@ -7,7 +7,7 @@ const zlib = require('node:zlib');
 const vm = require('node:vm');
 
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tarjetas-regression-'));
-const { createServer, readZipEntries, verifyPassword, extractStatementData } = require('./server');
+const { createServer, readZipEntries, verifyPassword, extractStatementData, normalizeExtraction } = require('./server');
 
 function zip(names = ['capturas/estado.png'], method = 8, flags = 0) {
   const locals = [], centrals = [];
@@ -68,14 +68,37 @@ test('login, restart persistence, ZIP extraction, streaming progress and disconn
     let release, started;
     const blocked = new Promise(resolve => { release = resolve; });
     const entered = new Promise(resolve => { started = resolve; });
-    global.fetch = async () => { started(); await blocked; return new Response(JSON.stringify({output_text:JSON.stringify({bankName:'Demo', cardName:'Oro', dueDate:'2026-09-20', minPayment:100, noInterestAmount:500, totalAmount:800, confidence:0.9})})); };
+    global.fetch = async () => { started(); await blocked; return new Response(JSON.stringify({output_text:JSON.stringify({bankName:'Demo', cardName:'Oro', period:'Septiembre 2026', dueDate:'2026-09-20', minPayment:100, noInterestAmount:500, totalAmount:800, evidence:{minPayment:'Pago minimo $100.00',noInterestAmount:'Pago para no generar intereses $500.00',totalAmount:'Saldo total $800.00'},confidence:0.9})})); };
     const uploading = request('/api/statements/auto', form(), cookie);
     await entered;
     response = await request('/api/login', credentials);
     const secondCookie = response.headers.get('set-cookie').split(';')[0];
     release();
     response = await uploading; assert.equal(response.status, 201);
-    assert.equal((await response.json()).results[0].statement.noInterestAmount, 500);
+    const extractedStatement = (await response.json()).results[0].statement;
+    assert.equal(extractedStatement.noInterestAmount, 500);
+    assert.equal(extractedStatement.needsReview, true);
+    const reviewBody = {review:true,cardId:extractedStatement.cardId,period:'Septiembre 2026',dueDate:'2026-09-20',minPayment:125.75,noInterestAmount:500,totalAmount:800};
+    const reviewRequest = (body, reviewCookie=cookie) => realFetch(base+'/api/statements/'+extractedStatement.id,{method:'PUT',headers:{Cookie:reviewCookie,'Content-Type':'application/json'},body:JSON.stringify(body)});
+    assert.equal((await reviewRequest({...reviewBody,minPayment:''})).status,400);
+    assert.equal((await reviewRequest({...reviewBody,minPayment:-1})).status,400);
+    assert.equal((await reviewRequest({...reviewBody,minPayment:false})).status,400);
+    assert.equal((await reviewRequest({...reviewBody,dueDate:'2026-02-30'})).status,400);
+    assert.equal((await reviewRequest({...reviewBody,cardId:'foreign-card'})).status,400);
+    response = await request('/api/register',{name:'Other',email:'other-review@example.com',password:'test-password'});
+    const foreignCookie = response.headers.get('set-cookie').split(';')[0];
+    assert.equal((await reviewRequest(reviewBody,foreignCookie)).status,404);
+    response = await reviewRequest(reviewBody);
+    assert.equal(response.status,200);
+    const reviewed = (await response.json()).statement;
+    assert.equal(reviewed.minPayment,125.75);
+    assert.equal(reviewed.needsReview,false);
+    assert.ok(reviewed.reviewedAt);
+    assert.equal(reviewed.file.id,extractedStatement.file.id);
+    assert.equal(reviewed.reviewHistory[0].minPayment,100);
+    assert.equal(reviewed.extractedValues.minPayment,100);
+    response = await reviewRequest({...reviewBody,minPayment:0});
+    assert.equal((await response.json()).statement.minPayment,0);
     assert.equal((await request('/api/me', null, secondCookie)).status, 200);
     const success = global.fetch; let calls = 0;
     global.fetch = (...args) => ++calls === 2 ? Promise.reject(new Error('mock failure')) : success(...args);
@@ -202,7 +225,7 @@ test('upload button is released and visible error appears after extraction failu
   const button = {};
   await listeners.get('#autoStatementFormsubmit')({preventDefault(){},currentTarget:{querySelector:selector=>selector.startsWith('input')?{files:[{}]}:button}});
   assert.equal(button.disabled,false);
-  assert.equal(button.textContent,'Extraer y guardar');
+  assert.equal(button.textContent,'Extraer para revisar');
   assert.match(node('#autoProgress').textContent,/agoto el tiempo/);
   assert.equal(intervals.size,0);
   const summary = vm.runInContext('extractionSummary([], [{filename:"one.png",error:"Sin saldo"},{filename:"two.png",error:"Sin saldo",notAttempted:true}])',context);

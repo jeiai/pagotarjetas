@@ -7,6 +7,8 @@ const state = {
 const $ = (selector) => document.querySelector(selector);
 const money = (value) =>
   new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(Number(value || 0));
+const amountLabel = value => value === null || value === undefined ? "No identificado" : money(value);
+const requiresReview = statement => Boolean(statement.needsReview || (statement.extractedAt && !statement.reviewedAt));
 
 async function api(path, options = {}) {
   const controller = new AbortController();
@@ -113,11 +115,15 @@ function render() {
   $("#dashboardView").classList.remove("hidden");
   $("#userName").textContent = state.user.name;
 
-  const activeStatements = state.statements.filter((item) => item.status !== "pagado");
+  const pendingReview = state.statements.filter((item) => item.status !== "pagado" && requiresReview(item));
+  const activeStatements = state.statements.filter((item) => item.status !== "pagado" && !requiresReview(item));
   $("#summaryNoInterest").textContent = money(activeStatements.reduce((sum, item) => sum + item.noInterestAmount, 0));
   $("#summaryMinimum").textContent = money(activeStatements.reduce((sum, item) => sum + item.minPayment, 0));
   $("#summaryTotal").textContent = money(activeStatements.reduce((sum, item) => sum + item.totalAmount, 0));
   $("#summaryCards").textContent = state.cards.length;
+  $("#summaryReview").textContent = pendingReview.length
+    ? `${pendingReview.length} archivo(s) por revisar. Sus importes aun no se incluyen en estos totales. Abre Revisar y confirmar en Pagos registrados.`
+    : "Totales de pagos pendientes y programados con importes confirmados.";
 
   $("#cardSelect").innerHTML = state.cards.length
     ? state.cards.map((card) => `<option value="${card.id}">${escapeHtml(card.bankName)} - ${escapeHtml(card.cardName)}</option>`).join("")
@@ -150,30 +156,41 @@ function render() {
     .filter((item) => status === "todos" || item.status === status)
     .sort(compareRecords);
 
+  // Keep an open correction form intact when another file finishes extraction.
+  const openReviews = [...document.querySelectorAll("#recordsList .record-review[open]")];
+  const focused = document.activeElement;
   $("#recordsList").innerHTML = records.length
     ? records.map(renderRecord).join("")
     : `<div class="empty">Todavia no hay estados de cuenta con este filtro.</div>`;
+  for (const details of openReviews) {
+    const id = details.querySelector("form").dataset.review;
+    const replacement = document.querySelector(`#recordsList form[data-review="${id}"]`)?.closest("details");
+    if (replacement) replacement.replaceWith(details);
+    if (replacement && focused && details.contains(focused)) focused.focus();
+  }
 }
 
 function renderRecord(statement) {
   const card = cardById(statement.cardId) || { cardName: "Tarjeta", bankName: "Banco" };
+  const review = requiresReview(statement);
   return `
     <article class="record">
       <div class="record-title">
         <strong>${escapeHtml(card.bankName)} - ${escapeHtml(card.cardName)}</strong>
         <span>${escapeHtml(statement.period)} - vence ${escapeHtml(statement.dueDate || "sin fecha")} - subio ${escapeHtml(ownerName(statement.uploadedBy))}</span>
+        ${review ? '<span class="review-badge">Por revisar · fuera del resumen</span>' : ""}
       </div>
       <div class="metric">
         <span>Minimo</span>
-        <strong>${money(statement.minPayment)}</strong>
+        <strong>${amountLabel(statement.minPayment)}</strong>
       </div>
       <div class="metric">
         <span>No intereses</span>
-        <strong>${money(statement.noInterestAmount)}</strong>
+        <strong>${amountLabel(statement.noInterestAmount)}</strong>
       </div>
       <div class="metric">
         <span>Total</span>
-        <strong>${money(statement.totalAmount)}</strong>
+        <strong>${amountLabel(statement.totalAmount)}</strong>
       </div>
       <div class="record-actions">
         <select data-status="${statement.id}" aria-label="Estado de pago">
@@ -181,8 +198,28 @@ function renderRecord(statement) {
         </select>
         <a href="/api/files/${statement.file.id}" target="_blank" rel="noreferrer">Ver archivo</a>
       </div>
+      ${renderReviewForm(statement, review)}
     </article>
   `;
+}
+
+function renderReviewForm(statement, review) {
+  const fields = [["minPayment", "Pago minimo"], ["noInterestAmount", "Para no generar intereses"], ["totalAmount", "Monto total"]];
+  const legacy = statement.extractedAt && !statement.reviewedAt && !statement.extractionEvidence;
+  return `<details class="record-review">
+    <summary>${review ? "Revisar y confirmar" : "Corregir importes"}</summary>
+    <p>Compara cada importe con el archivo. Un campo vacio significa que falta identificarlo. Si no aparece el pago minimo, consulta la seccion de pagos de tu banco o el estado de cuenta.</p>
+    ${legacy ? '<p class="review-badge">Lectura anterior: los ceros pudieron sustituir datos faltantes. Verifica todos los importes.</p>' : ""}
+    ${statement.file.contentType?.startsWith("image/") ? `<a href="/api/files/${statement.file.id}" target="_blank" rel="noreferrer"><img class="statement-preview" src="/api/files/${statement.file.id}" loading="lazy" alt="Captura original para comprobar los importes" /></a>` : ""}
+    <form class="statement-form review-form" data-review="${statement.id}">
+      <label>Tarjeta<select name="cardId" required>${state.cards.map(card => `<option value="${card.id}" ${card.id === statement.cardId ? "selected" : ""}>${escapeHtml(card.bankName)} - ${escapeHtml(card.cardName)} ${escapeHtml(card.lastFour)}</option>`).join("")}</select></label>
+      <label>Periodo<input name="period" value="${escapeHtml(statement.period === "Periodo por revisar" ? "" : statement.period)}" required /></label>
+      <label>Fecha limite de pago<input name="dueDate" type="date" value="${escapeHtml(statement.dueDate)}" required /></label>
+      ${fields.map(([field, label]) => `<label>${label}<input name="${field}" type="number" min="0" max="1000000000000" step="0.01" value="${statement[field] ?? ""}" placeholder="No identificado" required />${statement.extractionEvidence?.[field] ? `<small>Texto leido: ${escapeHtml(statement.extractionEvidence[field])}</small>` : ""}</label>`).join("")}
+      <button class="primary-btn full" type="submit">Confirmar importes</button>
+      <p class="form-message full" data-review-message role="status"></p>
+    </form>
+  </details>`;
 }
 
 function compareRecords(a, b) {
@@ -374,7 +411,7 @@ $("#autoStatementForm").addEventListener("submit", async (event) => {
   } finally {
     clearInterval(elapsed);
     button.disabled = false;
-    button.textContent = "Extraer y guardar";
+    button.textContent = "Extraer para revisar";
   }
 });
 
@@ -387,21 +424,45 @@ function extractionSummary(results, errors) {
   }
   const skipped = errors.filter(item => item.notAttempted).length;
   const details = [...groups].map(([message, names]) => `${message} Archivos pendientes: ${names.join(", ")}.`).join(" ");
-  return `Se guardaron ${results.length} archivo(s).` + (errors.length
+  return `Se recibieron ${results.length} archivo(s) para revisar. Confirma sus importes en Pagos registrados para incluirlos en el resumen.` + (errors.length
     ? ` Quedaron ${errors.length} sin procesar.${skipped ? ` Se detuvo el lote y no se enviaron ${skipped} archivo(s) restantes al servicio.` : ""} ${details}` : "");
 }
 
 function renderAutoResult(item) {
   const statement = item.statement;
   const card = item.card;
-  const review = item.needsReview ? " · revisar datos faltantes" : "";
+  const review = requiresReview(statement) ? " · por revisar" : "";
   return `
     <div class="auto-result">
       <strong>${escapeHtml(card.bankName)} - ${escapeHtml(card.cardName)}</strong>
-      <span>${escapeHtml(statement.file.originalName)} - ${escapeHtml(statement.dueDate || "sin fecha")} - ${money(statement.noInterestAmount)} para no intereses${review}</span>
+      <span>${escapeHtml(statement.file.originalName)} - ${escapeHtml(statement.dueDate || "sin fecha")}${review}</span>
+      <span>Minimo: ${amountLabel(statement.minPayment)} · Para no intereses: ${amountLabel(statement.noInterestAmount)} · Total: ${amountLabel(statement.totalAmount)}</span>
     </div>
   `;
 }
+
+$("#recordsList").addEventListener("submit", async (event) => {
+  const form = event.target.closest("form[data-review]");
+  if (!form) return;
+  event.preventDefault();
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  const message = form.querySelector("[data-review-message]");
+  try {
+    const result = await api(`/api/statements/${form.dataset.review}`, {
+      method: "PUT", body: JSON.stringify({ ...Object.fromEntries(new FormData(form)), review: true }),
+    });
+    const index = state.statements.findIndex(item => item.id === result.statement.id);
+    if (index !== -1) state.statements[index] = result.statement;
+    form.closest("details").open = false;
+    render();
+    setMessage($("#appMessage"), "Importes confirmados. El resumen esta actualizado.", true);
+  } catch (error) {
+    setMessage(message, error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
 
 $("#recordsList").addEventListener("change", async (event) => {
   const id = event.target.dataset.status;
