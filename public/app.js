@@ -257,6 +257,17 @@ async function loadApp() {
   render();
 }
 
+function hideRegisterPassword() {
+  $("#showRegisterPassword").checked = false;
+  $("#registerPassword").type = "password";
+}
+
+$("#showRegisterPassword").addEventListener("change", (event) => {
+  $("#registerPassword").type = event.currentTarget.checked ? "text" : "password";
+});
+
+$("#registerForm").addEventListener("reset", hideRegisterPassword);
+
 document.querySelectorAll("[data-auth-tab]").forEach((button) => {
   button.addEventListener("click", () => {
     document.querySelectorAll("[data-auth-tab]").forEach((item) => item.classList.remove("active"));
@@ -265,6 +276,7 @@ document.querySelectorAll("[data-auth-tab]").forEach((button) => {
     $("#loginForm").classList.toggle("hidden", tab !== "login");
     $("#registerForm").classList.toggle("hidden", tab !== "register");
     $("#resetForm").classList.toggle("hidden", tab !== "reset");
+    hideRegisterPassword();
     setMessage($("#authMessage"), "");
   });
 });

@@ -52,7 +52,11 @@
             </label>
             <label>
               Contrasena
-              <input name="password" type="password" autocomplete="new-password" minlength="6" required />
+              <input id="registerPassword" name="password" type="password" autocomplete="new-password" minlength="6" required />
+            </label>
+            <label class="password-visibility">
+              <input id="showRegisterPassword" type="checkbox" aria-controls="registerPassword" />
+              Mostrar contraseña
             </label>
             <button class="primary-btn" type="submit">Crear cuenta</button>
           </form>

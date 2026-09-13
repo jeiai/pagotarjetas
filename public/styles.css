@@ -190,6 +190,24 @@ textarea:focus {
   box-shadow: 0 0 0 3px rgba(20, 122, 111, 0.16);
 }
 
+.password-visibility {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.password-visibility input {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 .primary-btn,
 .ghost-btn {
   min-height: 44px;
