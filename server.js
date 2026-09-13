@@ -4,14 +4,12 @@ const http = require("http");
 const path = require("path");
 const zlib = require("zlib");
 const { URL } = require("url");
+const { createStorage } = require("./storage");
 
 const PORT = Number(process.env.PORT || 4173);
 const HOST = process.env.HOST || "0.0.0.0";
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, "public");
-const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT, "data");
-const UPLOADS_DIR = process.env.DATA_DIR ? path.join(DATA_DIR, "uploads") : path.join(ROOT, "uploads");
-const DB_FILE = path.join(DATA_DIR, "db.json");
 const MAX_BODY = 80 * 1024 * 1024;
 const MAX_AUTO_FILES = 15;
 const MAX_SINGLE_FILE = 12 * 1024 * 1024;
@@ -27,31 +25,6 @@ const MIME = {
   ".pdf": "application/pdf",
   ".zip": "application/zip",
 };
-
-function ensureStorage() {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-  if (!fs.existsSync(DB_FILE)) {
-    writeDb({ users: [], sessions: {}, cards: [], statements: [], passwordResets: [] });
-  }
-}
-
-function readDb() {
-  ensureStorage();
-  const db = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
-  db.users ||= [];
-  db.sessions ||= {};
-  db.cards ||= [];
-  db.statements ||= [];
-  db.passwordResets ||= [];
-  return db;
-}
-
-function writeDb(db) {
-  const tmp = `${DB_FILE}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
-  fs.renameSync(tmp, DB_FILE);
-}
 
 function id(prefix) {
   return `${prefix}_${crypto.randomBytes(10).toString("hex")}`;
@@ -614,11 +587,12 @@ function findOrCreateCard(db, user, extracted, fallbackCardId) {
   return card;
 }
 
-function saveUploadedFile(file) {
+async function saveUploadedFile(file, storage) {
+  if (file.buffer.length > MAX_SINGLE_FILE) throw Object.assign(new Error("El archivo supera el limite de 12 MB."), { status: 413 });
   const ext = path.extname(file.filename).toLowerCase();
   const fileId = id("file");
   const storedName = `${fileId}${ext}`;
-  fs.writeFileSync(path.join(UPLOADS_DIR, storedName), file.buffer);
+  await storage.saveFile(storedName, file.buffer, file.contentType);
   return {
     id: fileId,
     originalName: file.filename,
@@ -628,21 +602,26 @@ function saveUploadedFile(file) {
   };
 }
 
-async function handleApi(req, res, pathname) {
+async function handleApi(req, res, pathname, storage) {
+  const { readDb, writeDb } = storage;
   let db;
 
   try {
-    db = readDb();
+    if (req.method === "GET" && pathname === "/api/health") {
+      await storage.check();
+      return sendJson(res, 200, { ok: true, storage: storage.backend }, { "Cache-Control": "no-store" });
+    }
+    db = await readDb();
     if (req.method === "POST" && pathname === "/api/register") {
       const body = await readJson(req);
-      db = readDb();
+      db = await readDb();
       const email = normalizeEmail(body.email);
       const password = String(body.password || "");
       const name = sanitizeText(body.name, 80);
       if (!name || !validEmail(email) || password.length < 6) {
         return sendJson(res, 400, { error: "Nombre, correo valido y contrasena de al menos 6 caracteres son obligatorios." });
       }
-      if (db.users.some((user) => user.email === email)) {
+      if (db.users.some((user) => normalizeEmail(user.email) === email)) {
         return sendJson(res, 409, { error: "Ese correo ya tiene cuenta." });
       }
       const user = {
@@ -655,31 +634,31 @@ async function handleApi(req, res, pathname) {
       const sid = id("sid");
       db.users.push(user);
       db.sessions[sid] = user.id;
-      writeDb(db);
+      await writeDb(db);
       return sendJson(res, 201, { user: publicUser(user) }, { "Set-Cookie": `sid=${encodeURIComponent(sid)}; HttpOnly; SameSite=Lax; Path=/` });
     }
 
     if (req.method === "POST" && pathname === "/api/login") {
       const body = await readJson(req);
-      db = readDb();
+      db = await readDb();
       const user = db.users.find((item) => normalizeEmail(item.email) === normalizeEmail(body.email));
       if (!user || !verifyPassword(body.password, user.passwordHash)) {
         return sendJson(res, 401, { error: "Correo o contrasena incorrectos." });
       }
       const sid = id("sid");
       db.sessions[sid] = user.id;
-      writeDb(db);
+      await writeDb(db);
       return sendJson(res, 200, { user: publicUser(user) }, { "Set-Cookie": `sid=${encodeURIComponent(sid)}; HttpOnly; SameSite=Lax; Path=/` });
     }
 
     if (req.method === "POST" && pathname === "/api/request-password-reset") {
       const body = await readJson(req);
-      db = readDb();
+      db = await readDb();
       const email = normalizeEmail(body.email);
       if (!validEmail(email)) {
         return sendJson(res, 400, { error: "Escribe un correo valido." });
       }
-      const user = db.users.find((item) => item.email === email);
+      const user = db.users.find((item) => normalizeEmail(item.email) === email);
       if (!user) {
         return sendJson(res, 404, { error: "No existe una cuenta con ese correo. Primero crea tu cuenta." });
       }
@@ -698,13 +677,13 @@ async function handleApi(req, res, pathname) {
         createdAt: new Date(now).toISOString(),
         attempts: 0,
       });
-      writeDb(db);
+      await writeDb(db);
       try {
         await sendResetEmail(email, code);
       } catch (error) {
-        const latestDb = readDb();
+        const latestDb = await readDb();
         latestDb.passwordResets = latestDb.passwordResets.filter((item) => item.email !== email);
-        writeDb(latestDb);
+        await writeDb(latestDb);
         throw error;
       }
       return sendJson(res, 200, { message: "Codigo enviado. Revisa tu correo y la carpeta de spam." });
@@ -712,11 +691,11 @@ async function handleApi(req, res, pathname) {
 
     if (req.method === "POST" && pathname === "/api/reset-password") {
       const body = await readJson(req);
-      db = readDb();
+      db = await readDb();
       const email = normalizeEmail(body.email);
       const code = sanitizeText(body.code, 12);
       const password = String(body.password || "");
-      const user = db.users.find((item) => item.email === email);
+      const user = db.users.find((item) => normalizeEmail(item.email) === email);
       if (!validEmail(email) || !code || password.length < 6) {
         return sendJson(res, 400, { error: "Correo, codigo temporal y contrasena nueva de al menos 6 caracteres son obligatorios." });
       }
@@ -727,12 +706,12 @@ async function handleApi(req, res, pathname) {
       const reset = db.passwordResets.find((item) => item.email === email);
       if (!reset || Date.parse(reset.expiresAt) < now) {
         db.passwordResets = db.passwordResets.filter((item) => item.email !== email);
-        writeDb(db);
+        await writeDb(db);
         return sendJson(res, 400, { error: "El codigo expiro. Pide uno nuevo." });
       }
       if (reset.attempts >= 5 || reset.codeHash !== resetCodeHash(email, code)) {
         reset.attempts += 1;
-        writeDb(db);
+        await writeDb(db);
         return sendJson(res, 400, { error: "Codigo temporal incorrecto." });
       }
       user.passwordHash = hashPassword(password);
@@ -743,14 +722,14 @@ async function handleApi(req, res, pathname) {
       const sid = id("sid");
       db.sessions[sid] = user.id;
       db.passwordResets = db.passwordResets.filter((item) => item.email !== email);
-      writeDb(db);
+      await writeDb(db);
       return sendJson(res, 200, { user: publicUser(user) }, { "Set-Cookie": `sid=${encodeURIComponent(sid)}; HttpOnly; SameSite=Lax; Path=/` });
     }
 
     if (req.method === "POST" && pathname === "/api/logout") {
       const sid = cookieMap(req).sid;
       if (sid) delete db.sessions[sid];
-      writeDb(db);
+      await writeDb(db);
       return sendJson(res, 200, { ok: true }, { "Set-Cookie": "sid=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0" });
     }
 
@@ -769,7 +748,8 @@ async function handleApi(req, res, pathname) {
 
     if (req.method === "POST" && pathname === "/api/cards") {
       const body = await readJson(req);
-      db = readDb();
+      db = await readDb();
+      if (!requireUser(req, res, db)) return;
       const card = {
         id: id("card"),
         ownerId: user.id,
@@ -783,7 +763,7 @@ async function handleApi(req, res, pathname) {
         return sendJson(res, 400, { error: "Nombre de tarjeta y banco son obligatorios." });
       }
       db.cards.push(card);
-      writeDb(db);
+      await writeDb(db);
       return sendJson(res, 201, { card });
     }
 
@@ -794,7 +774,7 @@ async function handleApi(req, res, pathname) {
       const statementIds = new Set(db.statements.filter((item) => item.cardId === card.id).map((item) => item.id));
       db.cards = db.cards.filter((item) => item.id !== card.id);
       db.statements = db.statements.filter((item) => !statementIds.has(item.id));
-      writeDb(db);
+      await writeDb(db);
       return sendJson(res, 200, { ok: true });
     }
 
@@ -804,7 +784,7 @@ async function handleApi(req, res, pathname) {
 
     if (req.method === "POST" && pathname === "/api/statements") {
       const parts = parseMultipart(await readBody(req), req.headers["content-type"]);
-      db = readDb();
+      db = await readDb();
       if (!requireUser(req, res, db)) return;
       const card = groupCards(db, user).find((item) => item.id === parts.cardId);
       if (!card) return sendJson(res, 400, { error: "Selecciona una tarjeta valida." });
@@ -828,9 +808,14 @@ async function handleApi(req, res, pathname) {
       if (!statement.period || !statement.dueDate || PAYMENT_FIELDS.some(field => statement[field] === null)) {
         return sendJson(res, 400, { error: "Periodo, fecha limite y los tres montos son obligatorios. Escribe 0 solo cuando ese sea el importe real." });
       }
-      statement.file = saveUploadedFile(file);
+      statement.file = await saveUploadedFile(file, storage);
+      db = await readDb();
+      if (!requireUser(req, res, db)) return;
+      if (!groupCards(db, user).some(item => item.id === statement.cardId)) {
+        return sendJson(res, 409, { error: "La tarjeta cambio durante la carga. Selecciona una tarjeta e intenta de nuevo." });
+      }
       db.statements.push(statement);
-      writeDb(db);
+      await writeDb(db);
       return sendJson(res, 201, { statement });
     }
 
@@ -868,7 +853,9 @@ async function handleApi(req, res, pathname) {
             emit({ type: "progress", filename: file.filename, current: results.length + errors.length + 1, total: files.length });
             const extracted = await extractStatementData(file, { signal: controller.signal });
             if (res.destroyed) break;
-            db = readDb();
+            const uploadedFile = await saveUploadedFile(file, storage);
+            if (res.destroyed) break;
+            db = await readDb();
             if (!currentUser(req, db)) throw Object.assign(new Error("Tu sesion termino. Inicia sesion de nuevo."), { status: 401 });
             const card = findOrCreateCard(db, user, extracted, fallbackCardId);
             const needsReview = true;
@@ -896,11 +883,11 @@ async function handleApi(req, res, pathname) {
               extractedValues: { period: extracted.period, dueDate: extracted.dueDate, ...Object.fromEntries(PAYMENT_FIELDS.map(field => [field, extracted[field]])) },
               extractedAt: new Date().toISOString(),
               extractionConfidence: extracted.confidence,
-              file: saveUploadedFile(file),
+              file: uploadedFile,
               createdAt: new Date().toISOString(),
             };
             db.statements.push(statement);
-            writeDb(db);
+            await writeDb(db);
             results.push({ statement, card, extracted, needsReview });
             emit({ type: "result", result: results.at(-1) });
           } catch (error) {
@@ -930,7 +917,7 @@ async function handleApi(req, res, pathname) {
       if (!statement) return sendJson(res, 404, { error: "Estado de cuenta no encontrado." });
       if (req.method === "PUT") {
         const body = await readJson(req);
-        db = readDb();
+        db = await readDb();
         if (!requireUser(req, res, db)) return;
         statement = groupStatements(db, user).find((item) => item.id === statementMatch[1]);
         if (!statement) return sendJson(res, 404, { error: "Estado de cuenta no encontrado." });
@@ -954,7 +941,7 @@ async function handleApi(req, res, pathname) {
             cardId: card.id, needsReview: false, missingFields: [],
             reviewedAt: new Date().toISOString(), reviewedBy: user.id, updatedAt: new Date().toISOString(),
           });
-          writeDb(db);
+          await writeDb(db);
           return sendJson(res, 200, { statement });
         }
         const next = sanitizeText(body.status, 20);
@@ -963,12 +950,12 @@ async function handleApi(req, res, pathname) {
         }
         statement.status = next;
         statement.updatedAt = new Date().toISOString();
-        writeDb(db);
+        await writeDb(db);
         return sendJson(res, 200, { statement });
       }
       if (req.method === "DELETE") {
         db.statements = db.statements.filter((item) => item.id !== statement.id);
-        writeDb(db);
+        await writeDb(db);
         return sendJson(res, 200, { ok: true });
       }
     }
@@ -977,13 +964,14 @@ async function handleApi(req, res, pathname) {
     if (req.method === "GET" && fileMatch) {
       const statement = groupStatements(db, user).find((item) => item.file.id === fileMatch[1]);
       if (!statement) return sendJson(res, 404, { error: "Archivo no encontrado." });
-      const filePath = path.join(UPLOADS_DIR, statement.file.storedName);
-      if (!fs.existsSync(filePath)) return sendJson(res, 404, { error: "Archivo no encontrado." });
+      const file = await storage.readFile(statement.file.storedName);
       res.writeHead(200, {
         "Content-Type": statement.file.contentType,
         "Content-Disposition": `inline; filename="${statement.file.originalName.replace(/"/g, "")}"`,
+        "Cache-Control": "private, no-store",
+        "X-Content-Type-Options": "nosniff",
       });
-      return fs.createReadStream(filePath).pipe(res);
+      return res.end(file);
     }
 
     return sendJson(res, 404, { error: "Ruta no encontrada." });
@@ -1006,17 +994,23 @@ function serveStatic(req, res, pathname) {
   });
 }
 
-function createServer() {
-  ensureStorage();
+function createServer({ storage = createStorage() } = {}) {
+  storage.ensureStorage();
   return http.createServer((req, res) => {
     const { pathname } = new URL(req.url, `http://${req.headers.host}`);
-    if (pathname.startsWith("/api/")) return handleApi(req, res, pathname);
+    if (pathname.startsWith("/api/")) return handleApi(req, res, pathname, storage);
     return serveStatic(req, res, decodeURIComponent(pathname));
   });
 }
 
-if (require.main === module) createServer().listen(PORT, HOST, () => {
-    console.log(`App disponible en http://${HOST}:${PORT}`);
-  });
+if (require.main === module) {
+  (async () => {
+    const storage = createStorage();
+    await storage.check();
+    createServer({ storage }).listen(PORT, HOST, () => {
+      console.log(`App disponible en http://${HOST}:${PORT}. Almacenamiento: ${storage.backend}`);
+    });
+  })().catch(error => { console.error(error.message); process.exitCode = 1; });
+}
 
 module.exports = { createServer, readZipEntries, collectAutoFiles, verifyPassword, extractStatementData, normalizeExtraction };

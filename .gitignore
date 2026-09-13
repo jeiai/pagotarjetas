@@ -3,5 +3,7 @@ uploads/*
 !uploads/.gitkeep
 node_modules/
 .env
+.env.*
+!.env.example
 .DS_Store
 .codex-remote-attachments/
