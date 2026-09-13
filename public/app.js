@@ -9,6 +9,36 @@ const money = (value) =>
   new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(Number(value || 0));
 const amountLabel = value => value === null || value === undefined ? "No identificado" : money(value);
 const requiresReview = statement => Boolean(statement.needsReview || (statement.extractedAt && !statement.reviewedAt));
+const PERIOD_MONTHS = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+
+function selectOptions(values, selected, placeholder) {
+  return `<option value="">${placeholder}</option>` + values
+    .map((value) => `<option value="${escapeHtml(value)}" ${String(value) === String(selected) ? "selected" : ""}>${escapeHtml(value)}</option>`)
+    .join("");
+}
+
+function periodParts(value) {
+  const text = String(value || "");
+  const normalized = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const month = PERIOD_MONTHS.find((item) => normalized.includes(item.toLowerCase()));
+  const year = text.match(/\b(?:19|20|21)\d{2}\b/)?.[0] || "";
+  return { month: month || "", year };
+}
+
+function buildPeriod(cardId, month, year) {
+  const card = cardById(cardId);
+  return card && month && year ? `${card.cardName} ${month} ${year}` : "";
+}
+
+function syncPeriod(form) {
+  const cardId = form.querySelector('[name="cardId"]')?.value;
+  const month = form.querySelector('[name="periodMonth"]')?.value;
+  const year = form.querySelector('[name="periodYear"]')?.value;
+  const period = buildPeriod(cardId, month, year);
+  const target = form.querySelector('[name="period"]');
+  if (target) target.value = period;
+  return Boolean(period);
+}
 
 async function api(path, options = {}) {
   const controller = new AbortController();
@@ -151,6 +181,8 @@ function render() {
   $("#cardSelect").innerHTML = state.cards.length
     ? state.cards.map((card) => `<option value="${card.id}">${escapeHtml(card.bankName)} - ${escapeHtml(card.cardName)}</option>`).join("")
     : `<option value="">Primero agrega una tarjeta</option>`;
+  $("#periodMonth").innerHTML = selectOptions(PERIOD_MONTHS, "", "Selecciona el mes");
+  $("#periodYear").innerHTML = selectOptions(Array.from({ length: 101 }, (_, index) => 2000 + index), "", "Selecciona el año");
   $("#autoCardSelect").innerHTML =
     `<option value="">Detectar o crear tarjeta</option>` +
     state.cards.map((card) => `<option value="${card.id}">${escapeHtml(card.bankName)} - ${escapeHtml(card.cardName)}</option>`).join("");
@@ -247,14 +279,22 @@ function renderRecord(statement) {
 function renderReviewForm(statement, review) {
   const fields = [["minPayment", "Pago minimo"], ["noInterestAmount", "Para no generar intereses"], ["totalAmount", "Monto total"]];
   const legacy = statement.extractedAt && !statement.reviewedAt && !statement.extractionEvidence;
+  const { month, year } = periodParts(statement.period);
   return `<details class="record-review">
     <summary>${review ? "Revisar y confirmar" : "Corregir importes"}</summary>
     <p>Compara cada importe con el archivo. Un campo vacio significa que falta identificarlo. Si no aparece el pago minimo, consulta la seccion de pagos de tu banco o el estado de cuenta.</p>
     ${legacy ? '<p class="review-badge">Lectura anterior: los ceros pudieron sustituir datos faltantes. Verifica todos los importes.</p>' : ""}
     ${statement.file.contentType?.startsWith("image/") ? `<a href="/api/files/${statement.file.id}" target="_blank" rel="noreferrer"><img class="statement-preview" src="/api/files/${statement.file.id}" loading="lazy" alt="Captura original para comprobar los importes" /></a>` : ""}
     <form class="statement-form review-form" data-review="${statement.id}">
-      <label>Tarjeta<select name="cardId" required>${state.cards.map(card => `<option value="${card.id}" ${card.id === statement.cardId ? "selected" : ""}>${escapeHtml(card.bankName)} - ${escapeHtml(card.cardName)} ${escapeHtml(card.lastFour)}</option>`).join("")}</select></label>
-      <label>Periodo<input name="period" value="${escapeHtml(statement.period === "Periodo por revisar" ? "" : statement.period)}" required /></label>
+      <fieldset class="period-fields full">
+        <legend>Periodo</legend>
+        <div class="period-selects">
+          <label>Tarjeta<select name="cardId" required>${state.cards.map(card => `<option value="${card.id}" ${card.id === statement.cardId ? "selected" : ""}>${escapeHtml(card.bankName)} - ${escapeHtml(card.cardName)} ${escapeHtml(card.lastFour)}</option>`).join("")}</select></label>
+          <label>Mes<select name="periodMonth" required>${selectOptions(PERIOD_MONTHS, month, "Selecciona el mes")}</select></label>
+          <label>Año<select name="periodYear" required>${selectOptions(Array.from({ length: 101 }, (_, index) => 2000 + index), year, "Selecciona el año")}</select></label>
+        </div>
+        <input name="period" type="hidden" value="${escapeHtml(statement.period === "Periodo por revisar" ? "" : statement.period)}" />
+      </fieldset>
       <label>Fecha limite de pago<input name="dueDate" type="date" value="${escapeHtml(statement.dueDate)}" required /></label>
       ${fields.map(([field, label]) => `<label>${label}<input name="${field}" type="number" min="0" max="1000000000000" step="0.01" value="${statement[field] ?? ""}" placeholder="No identificado" required />${statement.extractionEvidence?.[field] ? `<small>Texto leido: ${escapeHtml(statement.extractionEvidence[field])}</small>` : ""}</label>`).join("")}
       <button class="primary-btn full" type="submit">Confirmar importes</button>
@@ -410,6 +450,10 @@ $("#cardForm").addEventListener("submit", async (event) => {
 $("#statementForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const formElement = event.currentTarget;
+  if (!syncPeriod(formElement)) {
+    setMessage($("#appMessage"), "Selecciona la tarjeta, el mes y el año del periodo.");
+    return;
+  }
   const form = new FormData(formElement);
   try {
     await api("/api/statements", { method: "POST", body: form });
@@ -419,6 +463,10 @@ $("#statementForm").addEventListener("submit", async (event) => {
   } catch (error) {
     setMessage($("#appMessage"), error.message);
   }
+});
+
+$("#statementForm").addEventListener("change", (event) => {
+  if (["cardId", "periodMonth", "periodYear"].includes(event.target.name)) syncPeriod(event.currentTarget);
 });
 
 $("#autoStatementForm").addEventListener("submit", async (event) => {
@@ -501,6 +549,11 @@ $("#recordsList").addEventListener("submit", async (event) => {
   const button = form.querySelector('button[type="submit"]');
   button.disabled = true;
   const message = form.querySelector("[data-review-message]");
+  if (!syncPeriod(form)) {
+    button.disabled = false;
+    setMessage(message, "Selecciona la tarjeta, el mes y el año del periodo.");
+    return;
+  }
   try {
     const result = await api(`/api/statements/${form.dataset.review}`, {
       method: "PUT", body: JSON.stringify({ ...Object.fromEntries(new FormData(form)), review: true }),
@@ -518,6 +571,11 @@ $("#recordsList").addEventListener("submit", async (event) => {
 });
 
 $("#recordsList").addEventListener("change", async (event) => {
+  if (["cardId", "periodMonth", "periodYear"].includes(event.target.name)) {
+    const reviewForm = event.target.closest("form[data-review]");
+    if (reviewForm) syncPeriod(reviewForm);
+    return;
+  }
   const id = event.target.dataset.status;
   if (!id) return;
   try {

@@ -349,6 +349,27 @@ textarea:focus {
   margin-top: 18px;
 }
 
+.period-fields {
+  min-width: 0;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.period-fields legend {
+  padding: 0 6px;
+  color: var(--ink);
+  font-size: 0.95rem;
+  font-weight: 900;
+}
+
+.period-selects {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
 .auto-form {
   padding: 16px;
   border: 1px solid var(--line);
@@ -577,6 +598,10 @@ textarea:focus {
 
   .auto-form,
   .statement-form {
+    grid-template-columns: 1fr;
+  }
+
+  .period-selects {
     grid-template-columns: 1fr;
   }
 

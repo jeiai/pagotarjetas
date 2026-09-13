@@ -187,14 +187,24 @@
             <div class="auto-results" id="autoResults"></div>
 
             <form id="statementForm" class="statement-form">
-              <label>
-                Tarjeta
-                <select name="cardId" id="cardSelect" required></select>
-              </label>
-              <label>
-                Periodo
-                <input name="period" placeholder="Julio 2026" required />
-              </label>
+              <fieldset class="period-fields full">
+                <legend>Periodo</legend>
+                <div class="period-selects">
+                  <label>
+                    Tarjeta
+                    <select name="cardId" id="cardSelect" required></select>
+                  </label>
+                  <label>
+                    Mes
+                    <select name="periodMonth" id="periodMonth" required></select>
+                  </label>
+                  <label>
+                    Año
+                    <select name="periodYear" id="periodYear" required></select>
+                  </label>
+                </div>
+                <input name="period" id="periodValue" type="hidden" />
+              </fieldset>
               <label>
                 Fecha limite de pago
                 <input name="dueDate" type="date" required />
