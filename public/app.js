@@ -175,6 +175,10 @@ function render() {
                   <span>Pago mínimo</span>
                   <strong>${statement ? amountLabel(statement.minPayment) : "—"}</strong>
                 </div>
+                <div class="credit-card-due-date">
+                  <span>Fecha límite de pago</span>
+                  <strong>${statement ? escapeHtml(statement.dueDate || "No identificada") : "—"}</strong>
+                </div>
               </div>
               ${review ? '<span class="credit-card-review">Por revisar</span>' : ""}
               <div class="credit-card-meta">

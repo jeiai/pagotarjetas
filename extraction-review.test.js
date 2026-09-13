@@ -81,6 +81,7 @@ test('dashboard excludes unreviewed extraction, displays missing minimum and inc
   assert.match(node('#summaryNoInterest').textContent,/0\.00/);
   assert.match(node('#summaryReview').textContent,/1 archivo/);
   assert.match(node('#cardsList').innerHTML,/Septiembre/);
+  assert.match(node('#cardsList').innerHTML,/2026-09-25/);
   assert.match(node('#cardsList').innerHTML,/No identificado/);
   assert.match(node('#recordsList').innerHTML,/No identificado/);
   assert.match(node('#recordsList').innerHTML,/Confirmar importes/);

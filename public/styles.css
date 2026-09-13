@@ -429,6 +429,10 @@ textarea:focus {
   gap: 4px;
 }
 
+.credit-card-payment .credit-card-due-date {
+  grid-column: 1 / -1;
+}
+
 .credit-card-payment span {
   font-size: 0.75rem;
   text-transform: uppercase;
