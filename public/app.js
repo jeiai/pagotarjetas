@@ -104,15 +104,26 @@ function ownerName(userId) {
   return userId === state.user?.id ? state.user.name : "Usuario";
 }
 
-function currentStatementForCard(cardId) {
-  const statements = state.statements.filter((item) => item.cardId === cardId);
-  const active = statements.filter((item) => item.status !== "pagado");
-  return (active.length ? active : statements)
-    .slice()
-    .sort((a, b) =>
-      String(b.dueDate || "").localeCompare(String(a.dueDate || "")) ||
-      String(b.createdAt || "").localeCompare(String(a.createdAt || ""))
-    )[0];
+function cardOverviewEntries() {
+  const entries = state.statements.map((statement) => ({
+    card: cardById(statement.cardId) || { id: statement.cardId, cardName: "Tarjeta", bankName: "Banco", color: "ink" },
+    statement,
+  }));
+  const cardsWithStatements = new Set(state.statements.map((statement) => statement.cardId));
+  for (const card of state.cards) {
+    if (!cardsWithStatements.has(card.id)) entries.push({ card, statement: null });
+  }
+  return entries.sort((left, right) => {
+    const leftAmount = left.statement?.minPayment;
+    const rightAmount = right.statement?.minPayment;
+    const leftMissing = leftAmount === null || leftAmount === undefined;
+    const rightMissing = rightAmount === null || rightAmount === undefined;
+    if (leftMissing !== rightMissing) return leftMissing ? 1 : -1;
+    if (!leftMissing && Number(leftAmount) !== Number(rightAmount)) return Number(leftAmount) - Number(rightAmount);
+    return String(left.card.bankName || "").localeCompare(String(right.card.bankName || ""), "es") ||
+      String(left.card.cardName || "").localeCompare(String(right.card.cardName || ""), "es") ||
+      String(left.statement?.period || "").localeCompare(String(right.statement?.period || ""), "es");
+  });
 }
 
 function render() {
@@ -126,12 +137,13 @@ function render() {
   $("#dashboardView").classList.remove("hidden");
   $("#userName").textContent = state.user.name;
 
+  const overviewEntries = cardOverviewEntries();
   const pendingReview = state.statements.filter((item) => item.status !== "pagado" && requiresReview(item));
   const activeStatements = state.statements.filter((item) => item.status !== "pagado" && !requiresReview(item));
   $("#summaryNoInterest").textContent = money(activeStatements.reduce((sum, item) => sum + item.noInterestAmount, 0));
   $("#summaryMinimum").textContent = money(activeStatements.reduce((sum, item) => sum + item.minPayment, 0));
   $("#summaryTotal").textContent = money(activeStatements.reduce((sum, item) => sum + item.totalAmount, 0));
-  $("#summaryCards").textContent = state.cards.length;
+  $("#summaryCards").textContent = overviewEntries.length;
   $("#summaryReview").textContent = pendingReview.length
     ? `${pendingReview.length} archivo(s) por revisar. Sus importes aun no se incluyen en estos totales. Abre Revisar y confirmar en Pagos registrados.`
     : "Totales de pagos pendientes y programados con importes confirmados.";
@@ -143,11 +155,10 @@ function render() {
     `<option value="">Detectar o crear tarjeta</option>` +
     state.cards.map((card) => `<option value="${card.id}">${escapeHtml(card.bankName)} - ${escapeHtml(card.cardName)}</option>`).join("");
 
-  $("#cardsList").innerHTML = state.cards.length
-    ? state.cards
+  $("#cardsList").innerHTML = overviewEntries.length
+    ? overviewEntries
         .map(
-          (card) => {
-            const statement = currentStatementForCard(card.id);
+          ({ card, statement }) => {
             const review = statement && requiresReview(statement);
             return `
             <article class="credit-card ${card.color}">

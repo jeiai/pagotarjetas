@@ -91,4 +91,8 @@ test('dashboard excludes unreviewed extraction, displays missing minimum and inc
   vm.runInContext(`delete state.statements[0].reviewedAt;state.statements[0].minPayment=0;render();`,context);
   assert.match(node('#summaryReview').textContent,/1 archivo/);
   assert.match(node('#recordsList').innerHTML,/Lectura anterior/);
+  vm.runInContext(`state.statements[0].minPayment=100;state.statements.push({id:'s2',cardId:'c',minPayment:50,noInterestAmount:80,totalAmount:100,status:'pendiente',dueDate:'2026-10-25',period:'Octubre',file:{id:'f2'}});render();`,context);
+  const cardsHtml = node('#cardsList').innerHTML;
+  assert.ok(cardsHtml.indexOf('Octubre') < cardsHtml.indexOf('Septiembre'));
+  assert.equal(node('#summaryCards').textContent,2);
 });
