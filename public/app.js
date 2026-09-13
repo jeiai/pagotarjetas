@@ -10,7 +10,7 @@ const money = (value) =>
 const amountLabel = value => value === null || value === undefined ? "No identificado" : money(value);
 const requiresReview = statement => Boolean(statement.needsReview || (statement.extractedAt && !statement.reviewedAt));
 const PERIOD_MONTHS = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
-const PERIOD_CARD_NAMES = ["banamex", "bancoppel", "BBVA", "bradescard", "didi", "juzt", "klar", "Liverpool", "nova", "nu", "plata", "stori", "uala"];
+const PERIOD_CARD_NAMES = ["banamex", "bancoppel", "banorte", "BBVA", "bradescard", "didi", "falabella", "juzt", "klar", "Liverpool", "nova", "nu", "otro", "plata", "stori", "uala"];
 
 function selectOptions(values, selected, placeholder) {
   return `<option value="">${placeholder}</option>` + values

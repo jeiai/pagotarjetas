@@ -376,7 +376,7 @@ function groupStatements(db, user) {
   return db.statements.filter((statement) => cardIds.has(statement.cardId));
 }
 
-const PERIOD_CARD_NAMES = ["banamex", "bancoppel", "BBVA", "bradescard", "didi", "juzt", "klar", "Liverpool", "nova", "nu", "plata", "stori", "uala"];
+const PERIOD_CARD_NAMES = ["banamex", "bancoppel", "banorte", "BBVA", "bradescard", "didi", "falabella", "juzt", "klar", "Liverpool", "nova", "nu", "otro", "plata", "stori", "uala"];
 
 function canonicalPeriodCardName(value) {
   const normalized = sanitizeText(value, 80).toLowerCase();
