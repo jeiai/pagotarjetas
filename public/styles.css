@@ -117,6 +117,7 @@ h2 {
 .auth-card,
 .side-panel,
 .main-panel,
+.cards-overview,
 .summary-grid article {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -271,6 +272,27 @@ textarea:focus {
   gap: 12px;
 }
 
+.cards-overview {
+  padding: 20px;
+}
+
+.cards-overview-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: end;
+}
+
+.cards-overview-head h2,
+.cards-overview-head p {
+  margin-bottom: 0;
+}
+
+.cards-overview-head > p {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
 .summary-grid article {
   padding: 18px;
 }
@@ -376,13 +398,55 @@ textarea:focus {
 }
 
 .credit-card {
-  min-height: 126px;
+  min-height: 188px;
   border-radius: 8px;
   padding: 16px;
   color: #fff;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
+}
+
+.credit-card-heading,
+.credit-card-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.credit-card-payment {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 18px 0;
+  padding: 12px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.credit-card-payment div {
+  display: grid;
+  gap: 4px;
+}
+
+.credit-card-payment span {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+}
+
+.credit-card-payment strong {
+  font-size: 1rem;
+}
+
+.credit-card-review {
+  align-self: flex-start;
+  margin: -8px 0 10px;
+  padding: 4px 7px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff !important;
+  font-size: 0.74rem;
+  font-weight: 900;
 }
 
 .credit-card.ink {
@@ -513,6 +577,7 @@ textarea:focus {
   }
 
   .topbar,
+  .cards-overview-head,
   .panel-header,
   .records-head {
     flex-direction: column;
@@ -538,6 +603,7 @@ textarea:focus {
   .auth-card,
   .side-panel,
   .main-panel,
+  .cards-overview,
   .summary-grid article {
     padding: 16px;
   }

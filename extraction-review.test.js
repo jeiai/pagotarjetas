@@ -80,11 +80,14 @@ test('dashboard excludes unreviewed extraction, displays missing minimum and inc
   assert.match(node('#summaryMinimum').textContent,/0\.00/);
   assert.match(node('#summaryNoInterest').textContent,/0\.00/);
   assert.match(node('#summaryReview').textContent,/1 archivo/);
+  assert.match(node('#cardsList').innerHTML,/Septiembre/);
+  assert.match(node('#cardsList').innerHTML,/No identificado/);
   assert.match(node('#recordsList').innerHTML,/No identificado/);
   assert.match(node('#recordsList').innerHTML,/Confirmar importes/);
   vm.runInContext(`state.statements[0].minPayment=100;state.statements[0].needsReview=false;state.statements[0].reviewedAt='2026-09-11';render();`,context);
   assert.match(node('#summaryMinimum').textContent,/100\.00/);
   assert.match(node('#summaryNoInterest').textContent,/200\.00/);
+  assert.match(node('#cardsList').innerHTML,/100\.00/);
   vm.runInContext(`delete state.statements[0].reviewedAt;state.statements[0].minPayment=0;render();`,context);
   assert.match(node('#summaryReview').textContent,/1 archivo/);
   assert.match(node('#recordsList').innerHTML,/Lectura anterior/);

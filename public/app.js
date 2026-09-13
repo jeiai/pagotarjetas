@@ -104,6 +104,17 @@ function ownerName(userId) {
   return userId === state.user?.id ? state.user.name : "Usuario";
 }
 
+function currentStatementForCard(cardId) {
+  const statements = state.statements.filter((item) => item.cardId === cardId);
+  const active = statements.filter((item) => item.status !== "pagado");
+  return (active.length ? active : statements)
+    .slice()
+    .sort((a, b) =>
+      String(b.dueDate || "").localeCompare(String(a.dueDate || "")) ||
+      String(b.createdAt || "").localeCompare(String(a.createdAt || ""))
+    )[0];
+}
+
 function render() {
   if (!state.user) {
     $("#authView").classList.remove("hidden");
@@ -135,21 +146,36 @@ function render() {
   $("#cardsList").innerHTML = state.cards.length
     ? state.cards
         .map(
-          (card) => `
+          (card) => {
+            const statement = currentStatementForCard(card.id);
+            const review = statement && requiresReview(statement);
+            return `
             <article class="credit-card ${card.color}">
-              <div>
+              <div class="credit-card-heading">
                 <strong>${escapeHtml(card.cardName)}</strong>
                 <span>${escapeHtml(card.bankName)}</span>
               </div>
-              <div>
+              <div class="credit-card-payment">
+                <div>
+                  <span>Periodo</span>
+                  <strong>${statement ? escapeHtml(statement.period || "Sin periodo") : "Sin estado de cuenta"}</strong>
+                </div>
+                <div>
+                  <span>Pago mínimo</span>
+                  <strong>${statement ? amountLabel(statement.minPayment) : "—"}</strong>
+                </div>
+              </div>
+              ${review ? '<span class="credit-card-review">Por revisar</span>' : ""}
+              <div class="credit-card-meta">
                 <span>${card.lastFour ? `**** ${escapeHtml(card.lastFour)}` : "Sin digitos"}</span>
                 <span>${escapeHtml(ownerName(card.ownerId))}</span>
               </div>
             </article>
-          `
+          `;
+          }
         )
         .join("")
-    : `<div class="empty">Agrega tu primera tarjeta para empezar a subir estados de cuenta.</div>`;
+    : `<div class="empty">Agrega tu primera tarjeta para ver aquí su periodo y pago mínimo.</div>`;
 
   const status = $("#statusFilter").value;
   const records = state.statements
