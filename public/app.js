@@ -10,6 +10,7 @@ const money = (value) =>
 const amountLabel = value => value === null || value === undefined ? "No identificado" : money(value);
 const requiresReview = statement => Boolean(statement.needsReview || (statement.extractedAt && !statement.reviewedAt));
 const PERIOD_MONTHS = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+const PERIOD_CARD_NAMES = ["banamex", "bancoppel", "BBVA", "bradescard", "didi", "juzt", "klar", "Liverpool", "nova", "nu", "plata", "stori", "uala"];
 
 function selectOptions(values, selected, placeholder) {
   return `<option value="">${placeholder}</option>` + values
@@ -25,16 +26,15 @@ function periodParts(value) {
   return { month: month || "", year };
 }
 
-function buildPeriod(cardId, month, year) {
-  const card = cardById(cardId);
-  return card && month && year ? `${card.cardName} ${month} ${year}` : "";
+function buildPeriod(cardName, month, year) {
+  return cardName && month && year ? `${cardName} ${month} ${year}` : "";
 }
 
 function syncPeriod(form) {
-  const cardId = form.querySelector('[name="cardId"]')?.value;
+  const cardName = form.querySelector('[name="cardName"]')?.value;
   const month = form.querySelector('[name="periodMonth"]')?.value;
   const year = form.querySelector('[name="periodYear"]')?.value;
-  const period = buildPeriod(cardId, month, year);
+  const period = buildPeriod(cardName, month, year);
   const target = form.querySelector('[name="period"]');
   if (target) target.value = period;
   return Boolean(period);
@@ -178,9 +178,7 @@ function render() {
     ? `${pendingReview.length} archivo(s) por revisar. Sus importes aun no se incluyen en estos totales. Abre Revisar y confirmar en Pagos registrados.`
     : "Totales de pagos pendientes y programados con importes confirmados.";
 
-  $("#cardSelect").innerHTML = state.cards.length
-    ? state.cards.map((card) => `<option value="${card.id}">${escapeHtml(card.bankName)} - ${escapeHtml(card.cardName)}</option>`).join("")
-    : `<option value="">Primero agrega una tarjeta</option>`;
+  $("#cardSelect").innerHTML = selectOptions(PERIOD_CARD_NAMES, "", "Selecciona la tarjeta");
   $("#periodMonth").innerHTML = selectOptions(PERIOD_MONTHS, "", "Selecciona el mes");
   $("#periodYear").innerHTML = selectOptions(Array.from({ length: 101 }, (_, index) => 2000 + index), "", "Selecciona el año");
   $("#autoCardSelect").innerHTML =
@@ -280,6 +278,10 @@ function renderReviewForm(statement, review) {
   const fields = [["minPayment", "Pago minimo"], ["noInterestAmount", "Para no generar intereses"], ["totalAmount", "Monto total"]];
   const legacy = statement.extractedAt && !statement.reviewedAt && !statement.extractionEvidence;
   const { month, year } = periodParts(statement.period);
+  const currentCard = cardById(statement.cardId);
+  const normalizedPeriod = String(statement.period || "").toLowerCase();
+  const selectedCardName = PERIOD_CARD_NAMES.find((name) => normalizedPeriod.startsWith(name.toLowerCase())) ||
+    PERIOD_CARD_NAMES.find((name) => [currentCard?.bankName, currentCard?.cardName].some((value) => String(value || "").toLowerCase() === name.toLowerCase())) || "";
   return `<details class="record-review">
     <summary>${review ? "Revisar y confirmar" : "Corregir importes"}</summary>
     <p>Compara cada importe con el archivo. Un campo vacio significa que falta identificarlo. Si no aparece el pago minimo, consulta la seccion de pagos de tu banco o el estado de cuenta.</p>
@@ -289,7 +291,7 @@ function renderReviewForm(statement, review) {
       <fieldset class="period-fields full">
         <legend>Periodo</legend>
         <div class="period-selects">
-          <label>Tarjeta<select name="cardId" required>${state.cards.map(card => `<option value="${card.id}" ${card.id === statement.cardId ? "selected" : ""}>${escapeHtml(card.bankName)} - ${escapeHtml(card.cardName)} ${escapeHtml(card.lastFour)}</option>`).join("")}</select></label>
+          <label>Tarjeta<select name="cardName" required>${selectOptions(PERIOD_CARD_NAMES, selectedCardName, "Selecciona la tarjeta")}</select></label>
           <label>Mes<select name="periodMonth" required>${selectOptions(PERIOD_MONTHS, month, "Selecciona el mes")}</select></label>
           <label>Año<select name="periodYear" required>${selectOptions(Array.from({ length: 101 }, (_, index) => 2000 + index), year, "Selecciona el año")}</select></label>
         </div>
@@ -466,7 +468,7 @@ $("#statementForm").addEventListener("submit", async (event) => {
 });
 
 $("#statementForm").addEventListener("change", (event) => {
-  if (["cardId", "periodMonth", "periodYear"].includes(event.target.name)) syncPeriod(event.currentTarget);
+  if (["cardName", "periodMonth", "periodYear"].includes(event.target.name)) syncPeriod(event.currentTarget);
 });
 
 $("#autoStatementForm").addEventListener("submit", async (event) => {
@@ -571,7 +573,7 @@ $("#recordsList").addEventListener("submit", async (event) => {
 });
 
 $("#recordsList").addEventListener("change", async (event) => {
-  if (["cardId", "periodMonth", "periodYear"].includes(event.target.name)) {
+  if (["cardName", "periodMonth", "periodYear"].includes(event.target.name)) {
     const reviewForm = event.target.closest("form[data-review]");
     if (reviewForm) syncPeriod(reviewForm);
     return;

@@ -86,7 +86,9 @@ test('dashboard excludes unreviewed extraction, displays missing minimum and inc
   assert.match(node('#recordsList').innerHTML,/No identificado/);
   assert.match(node('#recordsList').innerHTML,/Confirmar importes/);
   assert.match(node('#recordsList').innerHTML,/Selecciona el mes/);
-  assert.equal(vm.runInContext(`buildPeriod('c','Septiembre','2026')`,context),'Oro Septiembre 2026');
+  assert.equal(vm.runInContext(`buildPeriod('BBVA','Septiembre','2026')`,context),'BBVA Septiembre 2026');
+  assert.ok(node('#cardSelect').innerHTML.indexOf('banamex') < node('#cardSelect').innerHTML.indexOf('bancoppel'));
+  assert.ok(node('#cardSelect').innerHTML.indexOf('plata') < node('#cardSelect').innerHTML.indexOf('stori'));
   vm.runInContext(`state.statements[0].minPayment=100;state.statements[0].needsReview=false;state.statements[0].reviewedAt='2026-09-11';render();`,context);
   assert.match(node('#summaryMinimum').textContent,/100\.00/);
   assert.match(node('#summaryNoInterest').textContent,/200\.00/);
