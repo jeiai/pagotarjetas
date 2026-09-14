@@ -204,10 +204,12 @@ function render() {
 
   $("#cardSelect").innerHTML = selectOptions(availablePeriodCardNames(), "", "Selecciona la tarjeta");
   const todayPeriod = currentPeriod();
-  const selectedMonth = PERIOD_MONTHS.includes($("#periodMonth").value) ? $("#periodMonth").value : todayPeriod.month;
-  const selectedYear = PERIOD_YEARS.some((year) => String(year) === $("#periodYear").value) ? $("#periodYear").value : todayPeriod.year;
-  $("#periodMonth").innerHTML = selectOptions(PERIOD_MONTHS, selectedMonth, "Selecciona el mes");
-  $("#periodYear").innerHTML = selectOptions(PERIOD_YEARS, selectedYear, "Selecciona el año");
+  const periodMonthSelect = $("#periodMonth");
+  const periodYearSelect = $("#periodYear");
+  periodMonthSelect.innerHTML = selectOptions(PERIOD_MONTHS, todayPeriod.month, "Selecciona el mes");
+  periodYearSelect.innerHTML = selectOptions(PERIOD_YEARS, todayPeriod.year, "Selecciona el año");
+  periodMonthSelect.value = todayPeriod.month;
+  periodYearSelect.value = todayPeriod.year;
   $("#autoCardSelect").innerHTML =
     `<option value="">Detectar o crear tarjeta</option>` +
     state.cards.map((card) => `<option value="${card.id}">${escapeHtml(card.bankName)} - ${escapeHtml(card.cardName)}</option>`).join("");

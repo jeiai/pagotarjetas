@@ -73,7 +73,10 @@ test('vision request requires typed nullable amounts and evidence, without extra
 test('dashboard excludes unreviewed extraction, displays missing minimum and includes corrected amounts',()=>{
   const nodes=new Map();
   const node=selector=>{if(!nodes.has(selector))nodes.set(selector,{style:{},classList:{add(){},remove(){}},addEventListener(){},value:'todos'});return nodes.get(selector);};
-  const context=vm.createContext({document:{querySelector:node,querySelectorAll:()=>[]},Intl,FormData,console});
+  const FixedDate = class extends Date {
+    constructor(...args) { super(...(args.length ? args : ['2026-09-13T12:00:00-06:00'])); }
+  };
+  const context=vm.createContext({document:{querySelector:node,querySelectorAll:()=>[]},Intl,FormData,console,Date:FixedDate});
   vm.runInContext(fs.readFileSync('public/app.js','utf8').replace(/loadApp\(\);\s*$/,''),context);
   vm.runInContext(`state.user={id:'test',name:'Test'};state.cards=[{id:'c',bankName:'Banco',cardName:'Oro'}];
     state.statements=[{id:'s',cardId:'c',extractedAt:'2026-09-11',needsReview:true,minPayment:null,noInterestAmount:200,totalAmount:500,status:'pendiente',dueDate:'2026-09-25',period:'Septiembre',file:{id:'f'}}];render();`,context);
@@ -97,6 +100,8 @@ test('dashboard excludes unreviewed extraction, displays missing minimum and inc
   );
   assert.match(node('#periodMonth').innerHTML, /value="Septiembre" selected/);
   assert.match(node('#periodYear').innerHTML, /value="2026" selected/);
+  assert.equal(node('#periodMonth').value, 'Septiembre');
+  assert.equal(node('#periodYear').value, '2026');
   assert.ok(node('#cardSelect').innerHTML.indexOf('banamex') < node('#cardSelect').innerHTML.indexOf('bancoppel'));
   assert.ok(node('#cardSelect').innerHTML.indexOf('bancoppel') < node('#cardSelect').innerHTML.indexOf('banorte'));
   assert.match(node('#cardSelect').innerHTML,/falabella/);
