@@ -82,6 +82,8 @@ test('dashboard excludes unreviewed extraction, displays missing minimum and inc
   assert.match(node('#summaryReview').textContent,/1 archivo/);
   assert.match(node('#cardsList').innerHTML,/Septiembre/);
   assert.match(node('#cardsList').innerHTML,/2026-09-25/);
+  assert.match(node('#cardsList').innerHTML,/Estado/);
+  assert.match(node('#cardsList').innerHTML,/Pendiente/);
   assert.match(node('#cardsList').innerHTML,/No identificado/);
   assert.match(node('#recordsList').innerHTML,/No identificado/);
   assert.match(node('#recordsList').innerHTML,/Confirmar importes/);
@@ -98,7 +100,15 @@ test('dashboard excludes unreviewed extraction, displays missing minimum and inc
   assert.match(node('#summaryMinimum').textContent,/100\.00/);
   assert.match(node('#summaryNoInterest').textContent,/200\.00/);
   assert.match(node('#cardsList').innerHTML,/100\.00/);
-  vm.runInContext(`delete state.statements[0].reviewedAt;state.statements[0].minPayment=0;render();`,context);
+  vm.runInContext(`state.statements[0].status='parcial';state.statements[0].partialPaymentAmount=40.25;render();`,context);
+  assert.match(node('#cardsList').innerHTML,/Parcial/);
+  assert.match(node('#cardsList').innerHTML,/Monto abonado/);
+  assert.match(node('#cardsList').innerHTML,/40\.25/);
+  for (const [status,label] of [['programado','Programado'],['pagado','Pagado']]) {
+    vm.runInContext(`state.statements[0].status='${status}';render();`,context);
+    assert.match(node('#cardsList').innerHTML,new RegExp(label));
+  }
+  vm.runInContext(`state.statements[0].status='pendiente';delete state.statements[0].reviewedAt;state.statements[0].minPayment=0;render();`,context);
   assert.match(node('#summaryReview').textContent,/1 archivo/);
   assert.match(node('#recordsList').innerHTML,/Lectura anterior/);
   vm.runInContext(`state.statements[0].minPayment=100;state.statements.push({id:'s2',cardId:'c',minPayment:50,noInterestAmount:80,totalAmount:100,status:'pendiente',dueDate:'2026-10-25',period:'Octubre',file:{id:'f2'}});render();`,context);

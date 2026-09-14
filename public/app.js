@@ -207,6 +207,7 @@ function render() {
         .map(
           ({ card, statement }) => {
             const review = statement && requiresReview(statement);
+            const statusLabel = statement ? ({ pendiente: "Pendiente", programado: "Programado", parcial: "Parcial", pagado: "Pagado" }[statement.status] || "Pendiente") : "Sin registro";
             return `
             <article class="credit-card ${card.color}">
               <div class="credit-card-heading">
@@ -226,6 +227,14 @@ function render() {
                   <span>Fecha límite de pago</span>
                   <strong>${statement ? escapeHtml(statement.dueDate || "No identificada") : "—"}</strong>
                 </div>
+                <div class="credit-card-payment-status ${statement?.status === "parcial" ? "" : "full"}">
+                  <span>Estado</span>
+                  <strong>${statusLabel}</strong>
+                </div>
+                ${statement?.status === "parcial" ? `<div>
+                  <span>Monto abonado</span>
+                  <strong>${amountLabel(statement.partialPaymentAmount)}</strong>
+                </div>` : ""}
               </div>
               ${review ? '<span class="credit-card-review">Por revisar</span>' : ""}
               <div class="credit-card-meta">

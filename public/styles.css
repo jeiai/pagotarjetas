@@ -454,6 +454,10 @@ textarea:focus {
   grid-column: 1 / -1;
 }
 
+.credit-card-payment .full {
+  grid-column: 1 / -1;
+}
+
 .credit-card-payment span {
   font-size: 0.75rem;
   text-transform: uppercase;
