@@ -193,7 +193,7 @@ function render() {
   $("#summaryCards").textContent = overviewEntries.length;
   $("#summaryReview").textContent = pendingReview.length
     ? `${pendingReview.length} archivo(s) por revisar. Sus importes aun no se incluyen en estos totales. Abre Revisar y confirmar en Pagos registrados.`
-    : "Totales de pagos pendientes y programados con importes confirmados.";
+    : "Totales de pagos pendientes, programados y parciales con importes confirmados.";
 
   $("#cardSelect").innerHTML = selectOptions(availablePeriodCardNames(), "", "Selecciona la tarjeta");
   $("#periodMonth").innerHTML = selectOptions(PERIOD_MONTHS, "", "Selecciona el mes");
@@ -282,8 +282,15 @@ function renderRecord(statement) {
       </div>
       <div class="record-actions">
         <select data-status="${statement.id}" aria-label="Estado de pago">
-          ${["pendiente", "programado", "pagado"].map((item) => `<option value="${item}" ${item === statement.status ? "selected" : ""}>${item}</option>`).join("")}
+          ${["pendiente", "programado", "parcial", "pagado"].map((item) => `<option value="${item}" ${item === statement.status ? "selected" : ""}>${item}</option>`).join("")}
         </select>
+        <form class="partial-payment-form ${statement.status === "parcial" ? "" : "hidden"}" data-partial-payment="${statement.id}">
+          <label>
+            <span>Monto abonado</span>
+            <input name="partialPaymentAmount" type="number" min="0.01" max="1000000000000" step="0.01" value="${statement.partialPaymentAmount ?? ""}" placeholder="0.00" required />
+          </label>
+          <button type="submit">Guardar monto</button>
+        </form>
         <a href="/api/files/${statement.file.id}" target="_blank" rel="noreferrer">Ver archivo</a>
       </div>
       ${renderReviewForm(statement, review)}
@@ -566,6 +573,26 @@ function renderAutoResult(item) {
 }
 
 $("#recordsList").addEventListener("submit", async (event) => {
+  const partialForm = event.target.closest("form[data-partial-payment]");
+  if (partialForm) {
+    event.preventDefault();
+    const button = partialForm.querySelector('button[type="submit"]');
+    button.disabled = true;
+    try {
+      const result = await api(`/api/statements/${partialForm.dataset.partialPayment}`, {
+        method: "PUT",
+        body: JSON.stringify({ status: "parcial", partialPaymentAmount: new FormData(partialForm).get("partialPaymentAmount") }),
+      });
+      const index = state.statements.findIndex(item => item.id === result.statement.id);
+      if (index !== -1) state.statements[index] = result.statement;
+      render();
+      setMessage($("#appMessage"), "Pago parcial guardado.", true);
+    } catch (error) {
+      setMessage($("#appMessage"), error.message);
+      button.disabled = false;
+    }
+    return;
+  }
   const form = event.target.closest("form[data-review]");
   if (!form) return;
   event.preventDefault();
@@ -604,6 +631,12 @@ $("#recordsList").addEventListener("change", async (event) => {
   }
   const id = event.target.dataset.status;
   if (!id) return;
+  if (event.target.value === "parcial") {
+    const partialForm = event.target.closest(".record-actions").querySelector("[data-partial-payment]");
+    partialForm.classList.remove("hidden");
+    partialForm.querySelector('input[name="partialPaymentAmount"]').focus();
+    return;
+  }
   try {
     await api(`/api/statements/${id}`, { method: "PUT", body: JSON.stringify({ status: event.target.value }) });
     await loadApp();

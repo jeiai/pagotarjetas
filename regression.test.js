@@ -101,6 +101,16 @@ test('login, restart persistence, ZIP extraction, streaming progress and disconn
     assert.equal((await response.json()).statement.minPayment,0);
     response = await reviewRequest({...reviewBody,cardName:'otro',otherCardName:'Amex',period:'Amex Septiembre 2026'});
     assert.equal(response.status,200);
+    response = await reviewRequest({status:'parcial',partialPaymentAmount:''});
+    assert.equal(response.status,400);
+    response = await reviewRequest({status:'parcial',partialPaymentAmount:275.5});
+    assert.equal(response.status,200);
+    assert.equal((await response.json()).statement.partialPaymentAmount,275.5);
+    response = await reviewRequest({status:'pagado'});
+    assert.equal(response.status,200);
+    const paidStatement = (await response.json()).statement;
+    assert.equal(paidStatement.status,'pagado');
+    assert.equal(paidStatement.partialPaymentAmount,null);
     const customCards = await (await request('/api/cards', null, cookie)).json();
     assert.equal(customCards.cards.some(card=>card.periodOptionName==='Amex'),true);
     assert.equal((await request('/api/me', null, secondCookie)).status, 200);

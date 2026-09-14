@@ -540,6 +540,19 @@ textarea:focus {
   gap: 8px;
 }
 
+.partial-payment-form {
+  display: grid;
+  gap: 6px;
+}
+
+.partial-payment-form label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
 .record-review {
   grid-column: 1 / -1;
   border-top: 1px solid var(--line);
@@ -564,7 +577,8 @@ textarea:focus {
 
 .record-actions a,
 .record-actions button,
-.record-actions select {
+.record-actions select,
+.record-actions input {
   min-height: 34px;
   border: 1px solid var(--line);
   border-radius: 6px;

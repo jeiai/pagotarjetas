@@ -995,10 +995,15 @@ async function handleApi(req, res, pathname, storage) {
           return sendJson(res, 200, { statement });
         }
         const next = sanitizeText(body.status, 20);
-        if (!["pendiente", "programado", "pagado"].includes(next)) {
+        if (!["pendiente", "programado", "parcial", "pagado"].includes(next)) {
           return sendJson(res, 400, { error: "Estado invalido." });
         }
+        const partialPaymentAmount = next === "parcial" ? aiMoney(body.partialPaymentAmount) : null;
+        if (next === "parcial" && (partialPaymentAmount === null || partialPaymentAmount <= 0)) {
+          return sendJson(res, 400, { error: "Escribe un monto abonado mayor a 0 para guardar el pago parcial." });
+        }
         statement.status = next;
+        statement.partialPaymentAmount = partialPaymentAmount;
         statement.updatedAt = new Date().toISOString();
         await writeDb(db);
         return sendJson(res, 200, { statement });
