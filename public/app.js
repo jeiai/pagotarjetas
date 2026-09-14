@@ -10,7 +10,12 @@ const money = (value) =>
 const amountLabel = value => value === null || value === undefined ? "No identificado" : money(value);
 const requiresReview = statement => Boolean(statement.needsReview || (statement.extractedAt && !statement.reviewedAt));
 const PERIOD_MONTHS = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+const PERIOD_YEARS = Array.from({ length: 101 }, (_, index) => 2000 + index);
 const PERIOD_CARD_NAMES = ["banamex", "bancoppel", "banorte", "BBVA", "bradescard", "didi", "falabella", "juzt", "klar", "Liverpool", "nova", "nu", "otro", "plata", "stori", "uala"];
+
+function currentPeriod(now = new Date()) {
+  return { month: PERIOD_MONTHS[now.getMonth()], year: String(now.getFullYear()) };
+}
 
 function availablePeriodCardNames() {
   const names = [...PERIOD_CARD_NAMES, ...state.cards.map((card) => card.periodOptionName).filter(Boolean)];
@@ -198,8 +203,11 @@ function render() {
     : "Totales de pagos pendientes, programados y parciales con importes confirmados.";
 
   $("#cardSelect").innerHTML = selectOptions(availablePeriodCardNames(), "", "Selecciona la tarjeta");
-  $("#periodMonth").innerHTML = selectOptions(PERIOD_MONTHS, "", "Selecciona el mes");
-  $("#periodYear").innerHTML = selectOptions(Array.from({ length: 101 }, (_, index) => 2000 + index), "", "Selecciona el año");
+  const todayPeriod = currentPeriod();
+  const selectedMonth = PERIOD_MONTHS.includes($("#periodMonth").value) ? $("#periodMonth").value : todayPeriod.month;
+  const selectedYear = PERIOD_YEARS.some((year) => String(year) === $("#periodYear").value) ? $("#periodYear").value : todayPeriod.year;
+  $("#periodMonth").innerHTML = selectOptions(PERIOD_MONTHS, selectedMonth, "Selecciona el mes");
+  $("#periodYear").innerHTML = selectOptions(PERIOD_YEARS, selectedYear, "Selecciona el año");
   $("#autoCardSelect").innerHTML =
     `<option value="">Detectar o crear tarjeta</option>` +
     state.cards.map((card) => `<option value="${card.id}">${escapeHtml(card.bankName)} - ${escapeHtml(card.cardName)}</option>`).join("");
@@ -321,6 +329,7 @@ function renderReviewForm(statement, review) {
   const fields = [["minPayment", "Pago minimo"], ["noInterestAmount", "Para no generar intereses"], ["totalAmount", "Monto total"]];
   const legacy = statement.extractedAt && !statement.reviewedAt && !statement.extractionEvidence;
   const { cardName: periodCardName, month, year } = periodParts(statement.period);
+  const todayPeriod = currentPeriod();
   const currentCard = cardById(statement.cardId);
   const availableNames = availablePeriodCardNames();
   const selectedCardName = availableNames.find((name) => name.toLowerCase() === periodCardName.toLowerCase()) ||
@@ -335,8 +344,8 @@ function renderReviewForm(statement, review) {
         <legend>Periodo</legend>
         <div class="period-selects">
           <label>Tarjeta<select name="cardName" required>${selectOptions(availableNames, selectedCardName, "Selecciona la tarjeta")}</select></label>
-          <label>Mes<select name="periodMonth" required>${selectOptions(PERIOD_MONTHS, month, "Selecciona el mes")}</select></label>
-          <label>Año<select name="periodYear" required>${selectOptions(Array.from({ length: 101 }, (_, index) => 2000 + index), year, "Selecciona el año")}</select></label>
+          <label>Mes<select name="periodMonth" required>${selectOptions(PERIOD_MONTHS, month || todayPeriod.month, "Selecciona el mes")}</select></label>
+          <label>Año<select name="periodYear" required>${selectOptions(PERIOD_YEARS, year || todayPeriod.year, "Selecciona el año")}</select></label>
           <label class="other-card-field hidden">Nombre de la otra tarjeta<input name="otherCardName" maxlength="80" placeholder="Escribe el nombre" /></label>
         </div>
         <input name="period" type="hidden" value="${escapeHtml(statement.period === "Periodo por revisar" ? "" : statement.period)}" />
