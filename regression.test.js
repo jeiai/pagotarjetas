@@ -99,6 +99,10 @@ test('login, restart persistence, ZIP extraction, streaming progress and disconn
     assert.equal(reviewed.extractedValues.minPayment,100);
     response = await reviewRequest({...reviewBody,minPayment:0});
     assert.equal((await response.json()).statement.minPayment,0);
+    response = await reviewRequest({...reviewBody,cardName:'otro',otherCardName:'Amex',period:'Amex Septiembre 2026'});
+    assert.equal(response.status,200);
+    const customCards = await (await request('/api/cards', null, cookie)).json();
+    assert.equal(customCards.cards.some(card=>card.periodOptionName==='Amex'),true);
     assert.equal((await request('/api/me', null, secondCookie)).status, 200);
     const success = global.fetch; let calls = 0;
     global.fetch = (...args) => ++calls === 2 ? Promise.reject(new Error('mock failure')) : success(...args);

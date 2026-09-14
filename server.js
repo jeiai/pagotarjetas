@@ -383,16 +383,34 @@ function canonicalPeriodCardName(value) {
   return PERIOD_CARD_NAMES.find((name) => name.toLowerCase() === normalized) || "";
 }
 
+function resolvePeriodCardName(db, user, selectedName, otherName) {
+  const selected = sanitizeText(selectedName, 80);
+  if (selected.toLowerCase() === "otro") {
+    const custom = sanitizeText(otherName, 80);
+    return custom && custom.toLowerCase() !== "otro" ? custom : "";
+  }
+  const canonical = canonicalPeriodCardName(selected);
+  if (canonical) return canonical;
+  const existing = groupCards(db, user).find((card) => String(card.periodOptionName || "").toLowerCase() === selected.toLowerCase());
+  return existing?.periodOptionName || "";
+}
+
 function findOrCreatePeriodCard(db, user, requestedName) {
-  const name = canonicalPeriodCardName(requestedName);
+  const name = sanitizeText(requestedName, 80);
   if (!name) return null;
   const existing = groupCards(db, user).find((card) =>
+    String(card.periodOptionName || "").toLowerCase() === name.toLowerCase() ||
     card.bankName.toLowerCase() === name.toLowerCase() || card.cardName.toLowerCase() === name.toLowerCase()
   );
-  if (existing) return existing;
+  if (existing) {
+    if (!canonicalPeriodCardName(name)) existing.periodOptionName = name;
+    return existing;
+  }
+  const custom = !canonicalPeriodCardName(name);
   const card = {
     id: id("card"), ownerId: user.id, cardName: "Tarjeta", bankName: name,
     lastFour: "", color: "ink", createdAt: new Date().toISOString(),
+    ...(custom ? { periodOptionName: name } : {}),
   };
   db.cards.push(card);
   return card;
@@ -808,7 +826,7 @@ async function handleApi(req, res, pathname, storage) {
       const parts = parseMultipart(await readBody(req), req.headers["content-type"]);
       db = await readDb();
       if (!requireUser(req, res, db)) return;
-      const requestedCardName = canonicalPeriodCardName(parts.cardName);
+      const requestedCardName = resolvePeriodCardName(db, user, parts.cardName, parts.otherCardName);
       const existingCard = groupCards(db, user).find((item) => item.id === parts.cardId);
       if (!requestedCardName && !existingCard) return sendJson(res, 400, { error: "Selecciona una tarjeta valida." });
       const file = parts.document;
@@ -956,8 +974,11 @@ async function handleApi(req, res, pathname, storage) {
           if (!corrected.period || corrected.period === "Periodo por revisar" || !corrected.dueDate || PAYMENT_FIELDS.some(field => corrected[field] === null)) {
             return sendJson(res, 400, { error: "Completa el periodo, una fecha valida y los tres montos. Usa 0 solo si aparece en el documento." });
           }
-          const card = body.cardName
-            ? findOrCreatePeriodCard(db, user, body.cardName)
+          const requestedCardName = body.cardName
+            ? resolvePeriodCardName(db, user, body.cardName, body.otherCardName)
+            : "";
+          const card = requestedCardName
+            ? findOrCreatePeriodCard(db, user, requestedCardName)
             : groupCards(db, user).find(item => item.id === body.cardId);
           if (!card) return sendJson(res, 400, { error: "Selecciona una tarjeta de tu cuenta." });
           statement.reviewHistory ||= [];

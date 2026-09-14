@@ -12,6 +12,12 @@ const requiresReview = statement => Boolean(statement.needsReview || (statement.
 const PERIOD_MONTHS = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 const PERIOD_CARD_NAMES = ["banamex", "bancoppel", "banorte", "BBVA", "bradescard", "didi", "falabella", "juzt", "klar", "Liverpool", "nova", "nu", "otro", "plata", "stori", "uala"];
 
+function availablePeriodCardNames() {
+  const names = [...PERIOD_CARD_NAMES, ...state.cards.map((card) => card.periodOptionName).filter(Boolean)];
+  return [...new Map(names.map((name) => [name.toLowerCase(), name])).values()]
+    .sort((left, right) => left.localeCompare(right, "es", { sensitivity: "base" }));
+}
+
 function selectOptions(values, selected, placeholder) {
   return `<option value="">${placeholder}</option>` + values
     .map((value) => `<option value="${escapeHtml(value)}" ${String(value) === String(selected) ? "selected" : ""}>${escapeHtml(value)}</option>`)
@@ -23,7 +29,9 @@ function periodParts(value) {
   const normalized = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const month = PERIOD_MONTHS.find((item) => normalized.includes(item.toLowerCase()));
   const year = text.match(/\b(?:19|20|21)\d{2}\b/)?.[0] || "";
-  return { month: month || "", year };
+  const suffix = month && year ? `${month} ${year}`.toLowerCase() : "";
+  const cardName = suffix && text.toLowerCase().endsWith(suffix) ? text.slice(0, -suffix.length).trim() : "";
+  return { cardName, month: month || "", year };
 }
 
 function buildPeriod(cardName, month, year) {
@@ -31,13 +39,22 @@ function buildPeriod(cardName, month, year) {
 }
 
 function syncPeriod(form) {
-  const cardName = form.querySelector('[name="cardName"]')?.value;
+  const selectedCardName = form.querySelector('[name="cardName"]')?.value;
+  const cardName = selectedCardName === "otro" ? form.querySelector('[name="otherCardName"]')?.value.trim() : selectedCardName;
   const month = form.querySelector('[name="periodMonth"]')?.value;
   const year = form.querySelector('[name="periodYear"]')?.value;
   const period = buildPeriod(cardName, month, year);
   const target = form.querySelector('[name="period"]');
   if (target) target.value = period;
   return Boolean(period);
+}
+
+function toggleOtherCardField(form) {
+  const isOther = form.querySelector('[name="cardName"]')?.value === "otro";
+  const field = form.querySelector(".other-card-field");
+  const input = form.querySelector('[name="otherCardName"]');
+  field?.classList.toggle("hidden", !isOther);
+  if (input) input.required = isOther;
 }
 
 async function api(path, options = {}) {
@@ -178,7 +195,7 @@ function render() {
     ? `${pendingReview.length} archivo(s) por revisar. Sus importes aun no se incluyen en estos totales. Abre Revisar y confirmar en Pagos registrados.`
     : "Totales de pagos pendientes y programados con importes confirmados.";
 
-  $("#cardSelect").innerHTML = selectOptions(PERIOD_CARD_NAMES, "", "Selecciona la tarjeta");
+  $("#cardSelect").innerHTML = selectOptions(availablePeriodCardNames(), "", "Selecciona la tarjeta");
   $("#periodMonth").innerHTML = selectOptions(PERIOD_MONTHS, "", "Selecciona el mes");
   $("#periodYear").innerHTML = selectOptions(Array.from({ length: 101 }, (_, index) => 2000 + index), "", "Selecciona el año");
   $("#autoCardSelect").innerHTML =
@@ -277,11 +294,11 @@ function renderRecord(statement) {
 function renderReviewForm(statement, review) {
   const fields = [["minPayment", "Pago minimo"], ["noInterestAmount", "Para no generar intereses"], ["totalAmount", "Monto total"]];
   const legacy = statement.extractedAt && !statement.reviewedAt && !statement.extractionEvidence;
-  const { month, year } = periodParts(statement.period);
+  const { cardName: periodCardName, month, year } = periodParts(statement.period);
   const currentCard = cardById(statement.cardId);
-  const normalizedPeriod = String(statement.period || "").toLowerCase();
-  const selectedCardName = PERIOD_CARD_NAMES.find((name) => normalizedPeriod.startsWith(name.toLowerCase())) ||
-    PERIOD_CARD_NAMES.find((name) => [currentCard?.bankName, currentCard?.cardName].some((value) => String(value || "").toLowerCase() === name.toLowerCase())) || "";
+  const availableNames = availablePeriodCardNames();
+  const selectedCardName = availableNames.find((name) => name.toLowerCase() === periodCardName.toLowerCase()) ||
+    availableNames.find((name) => [currentCard?.periodOptionName, currentCard?.bankName, currentCard?.cardName].some((value) => String(value || "").toLowerCase() === name.toLowerCase())) || "";
   return `<details class="record-review">
     <summary>${review ? "Revisar y confirmar" : "Corregir importes"}</summary>
     <p>Compara cada importe con el archivo. Un campo vacio significa que falta identificarlo. Si no aparece el pago minimo, consulta la seccion de pagos de tu banco o el estado de cuenta.</p>
@@ -291,9 +308,10 @@ function renderReviewForm(statement, review) {
       <fieldset class="period-fields full">
         <legend>Periodo</legend>
         <div class="period-selects">
-          <label>Tarjeta<select name="cardName" required>${selectOptions(PERIOD_CARD_NAMES, selectedCardName, "Selecciona la tarjeta")}</select></label>
+          <label>Tarjeta<select name="cardName" required>${selectOptions(availableNames, selectedCardName, "Selecciona la tarjeta")}</select></label>
           <label>Mes<select name="periodMonth" required>${selectOptions(PERIOD_MONTHS, month, "Selecciona el mes")}</select></label>
           <label>Año<select name="periodYear" required>${selectOptions(Array.from({ length: 101 }, (_, index) => 2000 + index), year, "Selecciona el año")}</select></label>
+          <label class="other-card-field hidden">Nombre de la otra tarjeta<input name="otherCardName" maxlength="80" placeholder="Escribe el nombre" /></label>
         </div>
         <input name="period" type="hidden" value="${escapeHtml(statement.period === "Periodo por revisar" ? "" : statement.period)}" />
       </fieldset>
@@ -468,7 +486,10 @@ $("#statementForm").addEventListener("submit", async (event) => {
 });
 
 $("#statementForm").addEventListener("change", (event) => {
-  if (["cardName", "periodMonth", "periodYear"].includes(event.target.name)) syncPeriod(event.currentTarget);
+  if (["cardName", "periodMonth", "periodYear", "otherCardName"].includes(event.target.name)) {
+    toggleOtherCardField(event.currentTarget);
+    syncPeriod(event.currentTarget);
+  }
 });
 
 $("#autoStatementForm").addEventListener("submit", async (event) => {
@@ -573,9 +594,12 @@ $("#recordsList").addEventListener("submit", async (event) => {
 });
 
 $("#recordsList").addEventListener("change", async (event) => {
-  if (["cardName", "periodMonth", "periodYear"].includes(event.target.name)) {
+  if (["cardName", "periodMonth", "periodYear", "otherCardName"].includes(event.target.name)) {
     const reviewForm = event.target.closest("form[data-review]");
-    if (reviewForm) syncPeriod(reviewForm);
+    if (reviewForm) {
+      toggleOtherCardField(reviewForm);
+      syncPeriod(reviewForm);
+    }
     return;
   }
   const id = event.target.dataset.status;

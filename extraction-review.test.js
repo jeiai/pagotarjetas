@@ -92,6 +92,8 @@ test('dashboard excludes unreviewed extraction, displays missing minimum and inc
   assert.match(node('#cardSelect').innerHTML,/falabella/);
   assert.match(node('#cardSelect').innerHTML,/otro/);
   assert.ok(node('#cardSelect').innerHTML.indexOf('plata') < node('#cardSelect').innerHTML.indexOf('stori'));
+  vm.runInContext(`state.cards.push({id:'custom',bankName:'Amex',cardName:'Tarjeta',periodOptionName:'Amex'});render();`,context);
+  assert.match(node('#cardSelect').innerHTML,/Amex/);
   vm.runInContext(`state.statements[0].minPayment=100;state.statements[0].needsReview=false;state.statements[0].reviewedAt='2026-09-11';render();`,context);
   assert.match(node('#summaryMinimum').textContent,/100\.00/);
   assert.match(node('#summaryNoInterest').textContent,/200\.00/);
@@ -102,5 +104,5 @@ test('dashboard excludes unreviewed extraction, displays missing minimum and inc
   vm.runInContext(`state.statements[0].minPayment=100;state.statements.push({id:'s2',cardId:'c',minPayment:50,noInterestAmount:80,totalAmount:100,status:'pendiente',dueDate:'2026-10-25',period:'Octubre',file:{id:'f2'}});render();`,context);
   const cardsHtml = node('#cardsList').innerHTML;
   assert.ok(cardsHtml.indexOf('Octubre') < cardsHtml.indexOf('Septiembre'));
-  assert.equal(node('#summaryCards').textContent,2);
+  assert.equal(node('#summaryCards').textContent,3);
 });
