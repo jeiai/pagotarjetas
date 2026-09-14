@@ -152,6 +152,8 @@ function ownerName(userId) {
 }
 
 function cardOverviewEntries() {
+  const requestedSort = $("#overviewSort")?.value;
+  const sortBy = ["minPayment", "noInterestAmount", "totalAmount"].includes(requestedSort) ? requestedSort : "minPayment";
   const entries = state.statements.map((statement) => ({
     card: cardById(statement.cardId) || { id: statement.cardId, cardName: "Tarjeta", bankName: "Banco", color: "ink" },
     statement,
@@ -161,8 +163,8 @@ function cardOverviewEntries() {
     if (!cardsWithStatements.has(card.id)) entries.push({ card, statement: null });
   }
   return entries.sort((left, right) => {
-    const leftAmount = left.statement?.minPayment;
-    const rightAmount = right.statement?.minPayment;
+    const leftAmount = left.statement?.[sortBy];
+    const rightAmount = right.statement?.[sortBy];
     const leftMissing = leftAmount === null || leftAmount === undefined;
     const rightMissing = rightAmount === null || rightAmount === undefined;
     if (leftMissing !== rightMissing) return leftMissing ? 1 : -1;
@@ -222,6 +224,14 @@ function render() {
                 <div>
                   <span>Pago mínimo</span>
                   <strong>${statement ? amountLabel(statement.minPayment) : "—"}</strong>
+                </div>
+                <div>
+                  <span>Para no generar intereses</span>
+                  <strong>${statement ? amountLabel(statement.noInterestAmount) : "—"}</strong>
+                </div>
+                <div>
+                  <span>Monto total</span>
+                  <strong>${statement ? amountLabel(statement.totalAmount) : "—"}</strong>
                 </div>
                 <div class="credit-card-due-date">
                   <span>Fecha límite de pago</span>
@@ -656,5 +666,6 @@ $("#recordsList").addEventListener("change", async (event) => {
 
 $("#statusFilter").addEventListener("change", render);
 $("#sortRecords").addEventListener("change", render);
+$("#overviewSort").addEventListener("change", render);
 
 loadApp();

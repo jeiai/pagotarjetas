@@ -85,6 +85,8 @@ test('dashboard excludes unreviewed extraction, displays missing minimum and inc
   assert.match(node('#cardsList').innerHTML,/Estado/);
   assert.match(node('#cardsList').innerHTML,/Pendiente/);
   assert.match(node('#cardsList').innerHTML,/No identificado/);
+  assert.match(node('#cardsList').innerHTML,/Monto total/);
+  assert.match(node('#cardsList').innerHTML,/Para no generar intereses/);
   assert.match(node('#recordsList').innerHTML,/No identificado/);
   assert.match(node('#recordsList').innerHTML,/Confirmar importes/);
   assert.match(node('#recordsList').innerHTML,/Selecciona el mes/);
@@ -111,8 +113,16 @@ test('dashboard excludes unreviewed extraction, displays missing minimum and inc
   vm.runInContext(`state.statements[0].status='pendiente';delete state.statements[0].reviewedAt;state.statements[0].minPayment=0;render();`,context);
   assert.match(node('#summaryReview').textContent,/1 archivo/);
   assert.match(node('#recordsList').innerHTML,/Lectura anterior/);
-  vm.runInContext(`state.statements[0].minPayment=100;state.statements.push({id:'s2',cardId:'c',minPayment:50,noInterestAmount:80,totalAmount:100,status:'pendiente',dueDate:'2026-10-25',period:'Octubre',file:{id:'f2'}});render();`,context);
-  const cardsHtml = node('#cardsList').innerHTML;
+  vm.runInContext(`state.statements[0].minPayment=100;state.statements.push({id:'s2',cardId:'c',minPayment:50,noInterestAmount:800,totalAmount:100,status:'pendiente',dueDate:'2026-10-25',period:'Octubre',file:{id:'f2'}});render();`,context);
+  let cardsHtml = node('#cardsList').innerHTML;
+  assert.ok(cardsHtml.indexOf('Octubre') < cardsHtml.indexOf('Septiembre'));
+  node('#overviewSort').value='noInterestAmount';
+  vm.runInContext(`render();`,context);
+  cardsHtml = node('#cardsList').innerHTML;
+  assert.ok(cardsHtml.indexOf('Septiembre') < cardsHtml.indexOf('Octubre'));
+  node('#overviewSort').value='totalAmount';
+  vm.runInContext(`render();`,context);
+  cardsHtml = node('#cardsList').innerHTML;
   assert.ok(cardsHtml.indexOf('Octubre') < cardsHtml.indexOf('Septiembre'));
   assert.equal(node('#summaryCards').textContent,3);
 });

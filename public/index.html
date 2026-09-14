@@ -97,9 +97,16 @@
           <div class="cards-overview-head">
             <div>
               <p class="eyebrow">Vista rápida</p>
-              <h2 id="cardsOverviewTitle">Tarjetas y pagos mínimos</h2>
+              <h2 id="cardsOverviewTitle">Tarjetas y pagos</h2>
             </div>
-            <p>Todas las tarjetas con su periodo, ordenadas por pago mínimo.</p>
+            <label class="overview-sort">
+              Ordenar de menor a mayor por
+              <select id="overviewSort">
+                <option value="minPayment">Pago mínimo</option>
+                <option value="noInterestAmount">Pago para no generar intereses</option>
+                <option value="totalAmount">Pago total</option>
+              </select>
+            </label>
           </div>
           <div class="cards-list" id="cardsList"></div>
         </section>

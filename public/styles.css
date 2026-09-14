@@ -288,9 +288,17 @@ textarea:focus {
   margin-bottom: 0;
 }
 
-.cards-overview-head > p {
+.overview-sort {
+  display: grid;
+  gap: 6px;
   color: var(--muted);
   font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.overview-sort select {
+  min-height: 38px;
+  max-width: 290px;
 }
 
 .summary-grid article {
